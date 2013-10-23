@@ -861,7 +861,7 @@ class FormatsManager(QWidget):
             if fmt.path is None:
                 stream = db.format(id_, ext, as_file=True, index_is_id=True)
             else:
-                stream = open(fmt.path, 'r+b')
+                stream = open(fmt.path, 'rb')
             try:
                 with stream:
                     mi = get_metadata(stream, ext)
@@ -892,8 +892,7 @@ class Cover(ImageView):  # {{{
     download_cover = pyqtSignal()
 
     def __init__(self, parent):
-        ImageView.__init__(self, parent)
-        self.show_size = True
+        ImageView.__init__(self, parent, show_size_pref_name='edit_metadata_cover_widget', default_show_size=True)
         self.dialog = parent
         self._cdata = None
         self.cdata_before_trim = None
@@ -1264,11 +1263,12 @@ class IdentifiersEdit(QLineEdit):  # {{{
                 c = x.split(':')
                 if len(c) > 1:
                     itype = c[0].lower()
+                    c = ':'.join(c[1:])
                     if itype == 'isbn':
-                        v = check_isbn(c[1])
+                        v = check_isbn(c)
                         if v is not None:
-                            c[1] = v
-                    ans[itype] = c[1]
+                            c = v
+                    ans[itype] = c
             return ans
         def fset(self, val):
             if not val:

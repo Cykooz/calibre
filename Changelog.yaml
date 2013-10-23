@@ -20,6 +20,256 @@
 #   new recipes:
 #     - title: 
 
+- version: 1.7.0
+  date: 2013-10-18
+
+  new features:
+    - title: "Cover grid: Allow using images as the background for the cover grid. To choose an image, go to Preferences->Look & Feel->Cover Grid."
+      tickets: [1239194]
+
+    - title: "An option to mark newly added books with a temporary mark. Option is in Preferences->Adding books."
+      tickets: [1238609]
+ 
+    - title: "Edit metadata dialog: Allow turning off the cover size displayed in the bottom right corner of the cover by right clicking the cover and choosing 'Hide cover size'. It can be restored the same way."
+
+  bug fixes:
+    - title: "Conversion: If both embed font family and the filter css option to remove fonts are set, do not remove the font specified by the embed font family option."
+
+    - title: "Fix a few remaining situations that could cause formats column to show an error message about SHLock"
+
+    - title: "Make deleting books to recycle bin more robust. Ensure that the temporary directory created during the move to recycle bin process is not left behind in case of errors."
+
+    - title: "Windows: Check if the books' files are in use before deleting"
+
+    - title: "Fix custom device driver swap main and card option not working. Also fix swapping not happening for a few devices on linux"
+      tickets: [1240504]
+
+    - title: "Edit metadata dialog: The Edit metadata dialog currently limits its max size based on the geometry of the smallest attached screen. Change that to use the geometry of the screen on which it will be shown."
+      tickets: [1239597]
+
+    - title: "HTMLZ Output: Fix <style> tag placed inside <body> instead of <head>."
+      tickets: [1239530]
+
+    - title: "HTMLZ Output: Fix inline styles not escaping quotes properly."
+      tickets: [1239527]
+
+    - title: "HTMLZ Output: Fix incorrect handling of some self closing tags like <br>."
+      tickets: [1239555] 
+
+    - title: "Content server: Fix single item categories not working with reverse proxy setup."
+      tickets: [1238987]
+
+    - title: "Fix a bug that could cause calibre to crash when switching from a large library to a smaller library with marked books."
+      tickets: [1239210]
+
+    - title: "Get Books: Fix downloading of some books in formats that do not have metadata yielding nonsense titles"
+
+    - title: "Allow marked book button to be added to main toolbar when device is connected"
+      tickets: [1239163]
+
+    - title: "Fix error if a marked book is deleted/merged."
+      tickets: [1239161]
+
+    - title: "Template language: Fix formatter function days_between to compute the right value when the answer is negative."
+
+    - title: "Windows: Fix spurious file in use by other process error if the book's folder contained multiple hard links pointing to the same file"
+      tickets: [1240788, 1240194]
+
+    - title: "Windows: Fix duplicate files being created in very special circumstances when changing title and/or author. (the title or author had to be between 31 and 35 characters long and the book entry had to have been created by a pre 1.x version of calibre). You can check if your library has any such duplicates and remove them, by using the Check Library tool (Right click the calibre button on the toolbar and select Library Maintenance->Check Library)."
+
+  improved recipes:
+    - Wall Street Journal
+    - Newsweek Polska
+    - Wired Magazine
+    - cracked.com
+    - Television Without Pity
+    - Carta
+    - Diagonales
+
+
+- version: 1.6.0
+  date: 2013-10-11
+
+  new features:
+    - title: "Temporary marking of books in the library"
+      description: "This allows you to select books from your calibre library manually and mark them. This 'mark' will remain until you restart calibre, or clear the marks. You can easily work with only the marked subset of books by right clicking the Mark Books button. To use this feature, go to Preferences->Toolbars and add the 'Mark Books' tool to the main toolbar."
+      type: major
+
+    - title: "Get Books: Add Wolne Lektury and Amazon (Canada) ebook stores"
+
+    - title: "DOCX Input: Handle hyperlinks in footnotes and endnotes"
+      tickets: [1232790]
+
+    - title: "Driver for Sunstech reader"
+      tickets: [1231590]
+
+    - title: "Allow using both uri: and url: identifiers to create two different arbitrary links instead of just one in the Book details panel"
+
+    - title: "E-book viewer: Make all keyboard shortcuts configurable"
+      tickets: [1232019]
+
+    - title: "Conversion: Add an option to not condense CSS rules for margin, padding, border, etc. Option is under the Look & Feel section of the conversion dialog."
+      tickets: [1233220]
+
+    - title: "calibredb: Allow setting of title sort field"
+      tickets: [1233711]
+
+    - title: "ebook-meta: Add an --identifier option to set identifiers."
+ 
+  bug fixes:
+    - title: "Fix a locking error when composite columns containing formats are used and formats are added/deleted."
+      tickets: [1233330]
+
+    - title: "EPUB Output: Do not strip <object> tags with type application/svg+xml in addition to those that use image/svg+xml."
+      tickets: [1236845]
+
+    - title: "Cover grid: Fix selecting all books with Ctrl+A causing subsequent deselects to not fully work."
+      tickets: [1236348]
+
+    - title: "HTMLZ Output: Fix long titles causing error when converting on windows."
+      tickets: [1235815]
+
+    - title: "Content server: Fix OPDS category links to composite columns"
+
+    - title: "E-book viewer: Fix regression that broke import/export of bookmarks"
+      tickets: [1231980]
+
+    - title: "E-book viewer: Use the default font size setting for the dictionary view as well."
+      tickets: [1232025]
+
+    - title: "DOCX Input: Avoid using the value attribute for simple numbered lists, to silence the asinine epubcheck"
+
+    - title: "HTML Input: Images linked by the poster attribute of the <video> tag are now recognized and processed."
+
+    - title: "DOCX Input: Fix erorr when converting docx files that have numbering defined with no associated character style."
+      tickets: [1232100]
+
+    - title: "EPUB Metadata: Implementing updating identifiers other than isbn in the epub file from calibre when polishing or exporting the epub"
+
+    - title: "Amazon metadata download: Fix parsing of some dates on amazon.de"
+      tickets: [1238125]
+
+  improved recipes:
+    - National Geographic Magazine
+    - New York Review of Books
+    - Focus (PL)
+    - Carta Capital
+    - AM 730 
+    - Ming Pao (HK)
+    - Neu Osnabrucker Zeitung
+
+  new recipes:
+    - title: Various Uruguayan news sources 
+      author: Carlos Alves
+     
+- version: 1.5.0
+  date: 2013-09-26
+
+  new features:
+    - title: "Driver for Woxter Scriba"
+      tickets: [1228690]
+
+    - title: "Bulk metadata edit: Allow setting the comments for all selected books and also allow cloning the covers. Cloning covers means that the cover of the first selected book will be set for all other selected books."
+      tickets: [1230040]
+ 
+  bug fixes:
+    - title: "Windows: Improved device ejection code. Eject individual drives before trying to eject the device. This fixes incomplete ejection with the Nook devices."
+
+    - title: "Catalogs: fix exclude tags rules not working in non-English locales when creating catalogs in EPUB/MOBI formats."
+      tickets: [1228949]
+
+    - title: "Kobo driver: Fix reading status being cleared when connecting to a Kobo with older firmware and metadata management set to automatic."
+      tickets: [1230018]
+
+    - title: "Content server: Sort virtual libraries by name"
+      tickets: [1229459]
+
+    - title: "DOCX Input: Convert tabs in the docx file into non-breaking spaces in the output document. Note that custom tab stops are not supported."
+      tickets: [1228893]
+
+    - title: "Conversion: Handle the style attribute on the <html> tag"
+
+    - title: "Handle databases with invalid ratings link tables"
+      tickets: [1228517]
+
+    - title: "DOCX Input: Handle DOCX files with missing referenced styles"
+      tickets: [1228669]
+
+    - title: "Update amazon metadata download plugin for changes to the Amazon website"
+
+  improved recipes:
+    - Slate
+    - El Universal (VE)
+    - GoComics
+
+  new recipes:
+    - title: 
+
+- version: 1.4.0
+  date: 2013-09-20
+
+  new features:
+    - title: "Column icons: Allow the use of multiple icons with column icon rules."
+      description: "You can now have column icon rules display multiple icons in a single column, side by side. There are two ways to do this, either specify multiple icons when creating the rule, or create multiple rules that match the same book and specify the icon type to be 'composed' for every rule. See Preferences->Look & Feel->Column icons for details."
+
+    - title: "Kobo driver: Add support for new cover handling in Kobo Aura with updated firmware"
+
+    - title: "Driver for Icarus Essence"
+      tickets: [1226304] 
+
+    - title: "Show a warning when attempting to copy books between libraries that do not have the same set of custom columns."
+      tickets: [1225484]
+
+    - title: "EPUB/AZW3 Output: Use shorthand forms for margin, padding and border CSS properties, where possible"
+
+    - title: "Allow colons in identifier values, needed for using URIs as identifiers"
+      tickets: [1224885]
+
+    - title: "Comments editor: Allow treating arbitrary URLs as images"
+
+    - title: "Show full path of library under mouse in status bar when switching/renaming/deleting libraries via the calibre library button."
+      tickets: [1224925]
+
+    - title: "DOCX Input: Add support for embedded EMF images that are just wrappers around an actual raster image."
+      tickets: [1224849]
+ 
+  bug fixes:
+    - title: "Conversion: Fix font subsetting not working for large fonts with more than 4000 glyphs, such as CJK fonts"
+
+    - title: "HTML Input: Fix a regression that broke processing of HTML files that contain meta tags with dc: namespaced attribute values."
+
+    - title: "Fix switching to an empty virtual library not blanking the book details panel"
+
+    - title: "Keep position when deleting tags in the tag editor"
+      tickets: [1226093]
+
+    - title: "Book details panel: Render custom comments fields the same as the builtin comments field. In particular this fixes problems caused by wide text and images in custom comments fields."
+      tickets: [1226350]
+
+    - title: "Metadata jackets: Do not error out when using a custom template with some custom fields that are not present."
+      tickets: [1225357]
+
+    - title: "AZW3 Output: Dont choke on invalid (undecodable) links in the input document"
+
+    - title: "Cover grid: Respect the double click on library view tweak"
+
+    - title: "Fix covers set by drag and drop or pasting in the edit metadata dialog showing compression artifacts due to aggressive jpeg compression"
+
+    - title: "Conversion: Fix a bug that could cause incorrect border values to be used when cascading, shorthand border CSS is present."
+
+    - title: "Fix regression in 1.3 that caused the book list to not track the current book when using Next/Previous in the edit metadata dialog."
+
+  improved recipes:
+    - Liberation
+    - Politika
+
+  new recipes:
+    - title: Sage News 
+      author: Brian Hahn
+
+    - title: Il Cambiamento 
+      author: ghib9
+
 - version: 1.3.0
   date: 2013-09-13
 

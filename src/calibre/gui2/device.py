@@ -167,6 +167,10 @@ class DeviceManager(Thread): # {{{
         return self.connected_device is not None
 
     @property
+    def is_device_present(self):
+        return self.connected_device is not None and self.connected_device not in self.ejected_devices
+
+    @property
     def device(self):
         return self.connected_device
 
@@ -1233,7 +1237,8 @@ class DeviceMixin(object): # {{{
         ht = self.device_manager.device.THUMBNAIL_HEIGHT \
                 if self.device_manager else DevicePlugin.THUMBNAIL_HEIGHT
         try:
-            return thumbnail(data, ht, ht)
+            return thumbnail(data, ht, ht,
+                    compression_quality=self.device_manager.device.THUMBNAIL_COMPRESSION_QUALITY)
         except:
             pass
 

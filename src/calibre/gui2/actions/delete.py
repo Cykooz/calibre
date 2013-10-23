@@ -5,6 +5,7 @@ __license__   = 'GPL v3'
 __copyright__ = '2010, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
+import errno
 from functools import partial
 from collections import Counter
 
@@ -19,7 +20,7 @@ from calibre.utils.recycle_bin import can_recycle
 
 single_shot = partial(QTimer.singleShot, 10)
 
-class MultiDeleter(QObject): # {{{
+class MultiDeleter(QObject):  # {{{
 
     def __init__(self, gui, ids, callback):
         from calibre.gui2.dialogs.progress import ProgressDialog
@@ -256,7 +257,7 @@ class DeleteAction(InterfaceAction):
             self.gui.tags_view.recount()
 
     def remove_matching_books_from_device(self, *args):
-        if not self.gui.device_manager.is_device_connected:
+        if not self.gui.device_manager.is_device_present:
             d = error_dialog(self.gui, _('Cannot delete books'),
                              _('No device is connected'))
             d.exec_()
@@ -264,7 +265,7 @@ class DeleteAction(InterfaceAction):
         ids = self._get_selected_ids()
         if not ids:
             #_get_selected_ids shows a dialog box if nothing is selected, so we
-            #do not need to show one here
+            # do not need to show one here
             return
         to_delete = {}
         some_to_delete = False
@@ -305,7 +306,6 @@ class DeleteAction(InterfaceAction):
         self.gui.library_view.model().current_changed(self.gui.library_view.currentIndex(),
                 self.gui.library_view.currentIndex())
 
-
     def library_ids_deleted(self, ids_deleted, current_row=None):
         view = self.gui.library_view
         for v in (self.gui.memory_view, self.gui.card_a_view, self.gui.card_b_view):
@@ -332,7 +332,7 @@ class DeleteAction(InterfaceAction):
     def do_library_delete(self, to_delete_ids):
         view = self.gui.current_view()
         # Ask the user if they want to delete the book from the library or device if it is in both.
-        if self.gui.device_manager.is_device_connected:
+        if self.gui.device_manager.is_device_present:
             on_device = False
             on_device_ids = self._get_selected_ids()
             for id in on_device_ids:
@@ -361,7 +361,17 @@ class DeleteAction(InterfaceAction):
             return
         next_id = view.next_id
         if len(to_delete_ids) < 5:
-            view.model().delete_books_by_id(to_delete_ids)
+            try:
+                view.model().delete_books_by_id(to_delete_ids)
+            except IOError as err:
+                if err.errno == errno.EACCES:
+                    import traceback
+                    fname = getattr(err, 'filename', 'file') or 'file'
+                    return error_dialog(self.gui, _('Permission denied'),
+                            _('Could not access %s. Is it being used by another'
+                            ' program? Click "Show details" for more information.')%fname, det_msg=traceback.format_exc(),
+                            show=True)
+
             self.library_ids_deleted2(to_delete_ids, next_id=next_id)
         else:
             self.__md = MultiDeleter(self.gui, to_delete_ids,

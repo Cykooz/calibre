@@ -47,7 +47,7 @@ def reset_field_metadata():
     field_metadata = FieldMetadata()
 
 ck = lambda typ: icu_lower(typ).strip().replace(':', '').replace(',', '')
-cv = lambda val: val.strip().replace(',', '|').replace(':', '|')
+cv = lambda val: val.strip().replace(',', '|')
 
 class Metadata(object):
 
@@ -185,11 +185,11 @@ class Metadata(object):
         return key in object.__getattribute__(self, '_data')
 
     def deepcopy(self):
-        ''' Do not use this method unless you know what you are doing, if you want to create a simple clone of
-        this object, use :meth:`deepcopy_metadata` instead. '''
+        ''' Do not use this method unless you know what you are doing, if you
+        want to create a simple clone of this object, use :meth:`deepcopy_metadata`
+        instead. '''
         m = Metadata(None)
-        m.__dict__ = copy.deepcopy(self.__dict__)
-        object.__setattr__(m, '_data', copy.deepcopy(object.__getattribute__(self, '_data')))
+        object.__setattr__(m, '__dict__', copy.deepcopy(self.__dict__))
         return m
 
     def deepcopy_metadata(self):
@@ -391,7 +391,7 @@ class Metadata(object):
                     m['#value#'] = None
             um[key] = m
         _data = object.__getattribute__(self, '_data')
-        _data['user_metadata'].update(um)
+        _data['user_metadata'] = um
 
     def set_user_metadata(self, field, metadata):
         '''

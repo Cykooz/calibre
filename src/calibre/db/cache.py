@@ -18,7 +18,7 @@ from calibre.constants import iswindows, preferred_encoding
 from calibre.customize.ui import run_plugins_on_import, run_plugins_on_postimport
 from calibre.db import SPOOL_SIZE, _get_next_series_num_for_list
 from calibre.db.categories import get_categories
-from calibre.db.locking import create_locks
+from calibre.db.locking import create_locks, DowngradeLockError, SafeReadLock
 from calibre.db.errors import NoSuchFormat
 from calibre.db.fields import create_field, IDENTITY, InvalidLinkTable
 from calibre.db.search import Search
@@ -51,10 +51,16 @@ def write_api(f):
 
 def wrap_simple(lock, func):
     @wraps(func)
-    def ans(*args, **kwargs):
-        with lock:
+    def call_func_with_lock(*args, **kwargs):
+        try:
+            with lock:
+                return func(*args, **kwargs)
+        except DowngradeLockError:
+            # We already have an exclusive lock, no need to acquire a shared
+            # lock. See the safe_read_lock properties' documentation for why
+            # this is necessary.
             return func(*args, **kwargs)
-    return ans
+    return call_func_with_lock
 
 def run_import_plugins(path_or_stream, fmt):
     fmt = fmt.lower()
@@ -108,6 +114,22 @@ class Cache(object):
 
         self._search_api = Search(self, 'saved_searches', self.field_metadata.get_search_terms())
         self.initialize_dynamic()
+
+    @property
+    def safe_read_lock(self):
+        ''' A safe read lock is a lock that does nothing if the thread already
+        has a write lock, otherwise it acquires a read lock. This is necessary
+        to prevent DowngradeLockErrors, which can happen when updating the
+        search cache in the presence of composite columns. Updating the search
+        cache holds an exclusive lock, but searching a composite column
+        involves reading field values via ProxyMetadata which tries to get a
+        shared lock. There may be other scenarios that trigger this as well.
+
+        This property returns a new lock object on every access. This lock
+        object is not recursive (for performance) and must only be used in a
+        with statement as ``with cache.safe_read_lock:`` otherwise bad things
+        will happen.'''
+        return SafeReadLock(self.read_lock)
 
     @write_api
     def initialize_dynamic(self):
@@ -492,7 +514,7 @@ class Cache(object):
             x = self.format_metadata_cache[book_id].get(fmt, None)
             if x is not None:
                 return x
-        with self.read_lock:
+        with self.safe_read_lock:
             try:
                 name = self.fields['formats'].format_fname(book_id, fmt)
                 path = self._field_for('path', book_id).replace('/', os.sep)
@@ -536,7 +558,7 @@ class Cache(object):
         cover_as_data is True then as mi.cover_data.
         '''
 
-        with self.read_lock:
+        with self.safe_read_lock:
             mi = self._get_metadata(book_id, get_user_categories=get_user_categories)
 
         if get_cover:
@@ -742,7 +764,7 @@ class Cache(object):
         ext = ('.'+fmt.lower()) if fmt else ''
         if as_path:
             if preserve_filename:
-                with self.read_lock:
+                with self.safe_read_lock:
                     try:
                         fname = self.fields['formats'].format_fname(book_id, fmt)
                     except:
@@ -768,7 +790,7 @@ class Cache(object):
                         return None
                     ret = pt.name
         elif as_file:
-            with self.read_lock:
+            with self.safe_read_lock:
                 try:
                     fname = self.fields['formats'].format_fname(book_id, fmt)
                 except:
@@ -869,7 +891,7 @@ class Cache(object):
     @api
     def get_categories(self, sort='name', book_ids=None, icon_map=None, already_fixed=None):
         try:
-            with self.read_lock:
+            with self.safe_read_lock:
                 return get_categories(self, sort=sort, book_ids=book_ids, icon_map=icon_map)
         except InvalidLinkTable as err:
             bad_field = err.field_name
@@ -1388,6 +1410,10 @@ class Cache(object):
             except:
                 path = None
             path_map[book_id] = path
+        if iswindows:
+            paths = (x.replace(os.sep, '/') for x in path_map.itervalues() if x)
+            self.backend.windows_check_if_files_in_use(paths)
+
         self.backend.remove_books(path_map, permanent=permanent)
         for field in self.fields.itervalues():
             try:

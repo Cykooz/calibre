@@ -118,6 +118,7 @@ defs['cover_grid_color'] = (80, 80, 80)
 defs['cover_grid_cache_size'] = 100
 defs['cover_grid_disk_cache_size'] = 2500
 defs['cover_grid_show_title'] = False
+defs['cover_grid_texture'] = None
 defs['show_vl_tabs'] = False
 del defs
 # }}}
@@ -738,14 +739,14 @@ def choose_images(window, name, title, select_only_single_file=True,
         return fd.get_files()
     return None
 
-def pixmap_to_data(pixmap, format='JPEG'):
+def pixmap_to_data(pixmap, format='JPEG', quality=90):
     '''
     Return the QPixmap pixmap as a string saved in the specified format.
     '''
     ba = QByteArray()
     buf = QBuffer(ba)
     buf.open(QBuffer.WriteOnly)
-    pixmap.save(buf, format)
+    pixmap.save(buf, format, quality=quality)
     return bytes(ba.data())
 
 class ResizableDialog(QDialog):
@@ -753,11 +754,13 @@ class ResizableDialog(QDialog):
     def __init__(self, *args, **kwargs):
         QDialog.__init__(self, *args)
         self.setupUi(self)
-        nh, nw = min_available_height()-25, available_width()-10
+        desktop = QCoreApplication.instance().desktop()
+        geom = desktop.availableGeometry(self)
+        nh, nw = geom.height()-25, geom.width()-10
         if nh < 0:
-            nh = 800
+            nh = max(800, self.height())
         if nw < 0:
-            nw = 600
+            nw = max(600, self.height())
         nh = min(self.height(), nh)
         nw = min(self.width(), nw)
         self.resize(nw, nh)
@@ -873,6 +876,11 @@ class Application(QApplication):
                 'MessageBoxWarning': u'dialog_warning.png',
                 'MessageBoxCritical': u'dialog_error.png',
                 'MessageBoxQuestion': u'dialog_question.png',
+                # These two are used to calculate the sizes for the doc widget
+                # title bar buttons, therefore, they have to exist. The actual
+                # icon is not used.
+                'TitleBarCloseButton': u'window-close.png',
+                'TitleBarNormalButton': u'window-close.png',
                 }.iteritems():
             if v not in pcache:
                 p = I(v)

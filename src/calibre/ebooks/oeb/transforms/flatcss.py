@@ -227,6 +227,10 @@ class CSSFlattener(object):
         for item in self.oeb.spine:
             html = item.data
             body = html.find(XHTML('body'))
+            if 'style' in html.attrib:
+                b = body.attrib.get('style', '')
+                body.set('style',  html.get('style') + ';' + b)
+                del html.attrib['style']
             bs = body.get('style', '').split(';')
             bs.append('margin-top: 0pt')
             bs.append('margin-bottom: 0pt')
@@ -406,7 +410,10 @@ class CSSFlattener(object):
 
         if cssdict:
             for x in self.filter_css:
-                cssdict.pop(x, None)
+                popval = cssdict.pop(x, None)
+                if (self.body_font_family and popval and x == 'font-family' and
+                    popval.partition(',')[0][1:-1] == self.body_font_family.partition(',')[0][1:-1]):
+                    cssdict[x] = popval
 
         if cssdict:
             if self.lineh and self.fbase and tag != 'body':

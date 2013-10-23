@@ -489,7 +489,7 @@ class BrowseServer(object):
 
         # Now do the category items
         vls = self.db.prefs.get('virtual_libraries', {})
-        categories['virt_libs'] = [Tag(k) for k, v in vls.iteritems()]
+        categories['virt_libs'] = sorted([Tag(k) for k, v in vls.iteritems()], key=lambda x:sort_key(x.name))
         items = categories[category]
 
         sort = self.browse_sort_categories(items, sort)
@@ -500,7 +500,7 @@ class BrowseServer(object):
                     datatype, self.opts.url_prefix)
             href = re.search(r'<a href="([^"]+)"', html)
             if href is not None:
-                raise cherrypy.HTTPRedirect(href.group(1))
+                raise cherrypy.InternalRedirect(href.group(1))
 
         if len(items) <= self.opts.max_opds_ungrouped_items:
             script = 'false'

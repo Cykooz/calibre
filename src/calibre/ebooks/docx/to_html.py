@@ -6,7 +6,7 @@ from __future__ import (unicode_literals, division, absolute_import,
 __license__ = 'GPL v3'
 __copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
 
-import sys, os, re
+import sys, os, re, math
 from collections import OrderedDict, defaultdict
 
 from lxml import html
@@ -16,7 +16,7 @@ from lxml.html.builder import (
 from calibre.ebooks.docx.container import DOCX, fromstring
 from calibre.ebooks.docx.names import (
     XPath, is_tag, XML, STYLES, NUMBERING, FONTS, get, generate_anchor,
-    descendants, FOOTNOTES, ENDNOTES, children, THEMES)
+    descendants, FOOTNOTES, ENDNOTES, children, THEMES, SETTINGS)
 from calibre.ebooks.docx.styles import Styles, inherit, PageProperties
 from calibre.ebooks.docx.numbering import Numbering
 from calibre.ebooks.docx.fonts import Fonts
@@ -27,6 +27,7 @@ from calibre.ebooks.docx.cleanup import cleanup_markup
 from calibre.ebooks.docx.theme import Theme
 from calibre.ebooks.docx.toc import create_toc
 from calibre.ebooks.docx.fields import Fields
+from calibre.ebooks.docx.settings import Settings
 from calibre.ebooks.metadata.opf2 import OPFCreator
 from calibre.utils.localization import canonicalize_lang, lang_as_iso639_1
 
@@ -54,6 +55,7 @@ class Convert(object):
         self.mi = self.docx.metadata
         self.body = BODY()
         self.theme = Theme()
+        self.settings = Settings()
         self.tables = Tables()
         self.fields = Fields()
         self.styles = Styles(self.tables)
@@ -91,10 +93,12 @@ class Convert(object):
         self.framed_map = {}
         self.anchor_map = {}
         self.link_map = defaultdict(list)
+        self.link_source_map = {}
         paras = []
 
         self.log.debug('Converting Word markup to HTML')
         self.read_page_properties(doc)
+        self.current_rels = relationships_by_id
         for wp, page_properties in self.page_map.iteritems():
             self.current_page = page_properties
             if wp.tag.endswith('}p'):
@@ -121,7 +125,7 @@ class Convert(object):
                 dl[-1][0].tail = ']'
                 dl.append(DD())
                 paras = []
-                self.images.rid_map = note.rels[0]
+                self.images.rid_map = self.current_rels = note.rels[0]
                 for wp in note:
                     if wp.tag.endswith('}tbl'):
                         self.tables.register(wp, self.styles)
@@ -131,9 +135,31 @@ class Convert(object):
                         dl[-1].append(p)
                         paras.append(wp)
                 self.styles.apply_contextual_spacing(paras)
+
+        for p, wp in self.object_map.iteritems():
+            if len(p) > 0 and not p.text and len(p[0]) > 0 and not p[0].text and p[0][0].get('class', None) == 'tab':
+                # Paragraph uses tabs for indentation, convert to text-indent
+                parent = p[0]
+                tabs = []
+                for child in parent:
+                    if child.get('class', None) == 'tab':
+                        tabs.append(child)
+                        if child.tail:
+                            break
+                    else:
+                        break
+                indent = len(tabs) * self.settings.default_tab_stop
+                style = self.styles.resolve(wp)
+                if style.text_indent is inherit or (hasattr(style.text_indent, 'endswith') and style.text_indent.endswith('pt')):
+                    if style.text_indent is not inherit:
+                        indent = float(style.text_indent[:-2]) + indent
+                    style.text_indent = '%.3gpt' % indent
+                    parent.text = tabs[-1].tail or ''
+                    map(parent.remove, tabs)
+
         self.images.rid_map = orig_rid_map
 
-        self.resolve_links(relationships_by_id)
+        self.resolve_links()
 
         self.styles.cascade(self.layers)
 
@@ -227,6 +253,7 @@ class Convert(object):
 
         nname = get_name(NUMBERING, 'numbering.xml')
         sname = get_name(STYLES, 'styles.xml')
+        sename = get_name(SETTINGS, 'settings.xml')
         fname = get_name(FONTS, 'fontTable.xml')
         tname = get_name(THEMES, 'theme1.xml')
         foname = get_name(FOOTNOTES, 'footnotes.xml')
@@ -237,6 +264,14 @@ class Convert(object):
 
         foraw = enraw = None
         forel, enrel = ({}, {}), ({}, {})
+        if sename is not None:
+            try:
+                seraw = self.docx.read(sename)
+            except KeyError:
+                self.log.warn('Settings %s do not exist' % sename)
+            else:
+                self.settings(fromstring(seraw))
+
         if foname is not None:
             try:
                 foraw = self.docx.read(foname)
@@ -345,6 +380,7 @@ class Convert(object):
                     try:
                         hl = hl_xpath(x)[0]
                         self.link_map[hl].append(span)
+                        self.link_source_map[hl] = self.current_rels
                         x.set('is-link', '1')
                     except IndexError:
                         current_hyperlink = None
@@ -422,9 +458,10 @@ class Convert(object):
             wrapper.append(elem)
         return wrapper
 
-    def resolve_links(self, relationships_by_id):
+    def resolve_links(self):
         self.resolved_link_map = {}
         for hyperlink, spans in self.link_map.iteritems():
+            relationships_by_id = self.link_source_map[hyperlink]
             span = spans[0]
             if len(spans) > 1:
                 span = self.wrap_elems(spans, SPAN())
@@ -538,6 +575,11 @@ class Convert(object):
                     l.set('class', 'noteref')
                     text.add_elem(l)
                     ans.append(text.elem)
+            elif is_tag(child, 'w:tab'):
+                spaces = int(math.ceil((self.settings.default_tab_stop / 36) * 6))
+                text.add_elem(SPAN(NBSP * spaces))
+                ans.append(text.elem)
+                ans[-1].set('class', 'tab')
         if text.buf:
             setattr(text.elem, text.attr, ''.join(text.buf))
 

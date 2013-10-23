@@ -13,9 +13,14 @@ from calibre.utils.config_base import tweaks
 
 class LockingError(RuntimeError):
 
+    is_locking_error = True
+
     def __init__(self, msg, extra=None):
         RuntimeError.__init__(self, msg)
         self.locking_debug_msg = extra
+
+class DowngradeLockError(LockingError):
+    pass
 
 def create_locks():
     '''
@@ -150,7 +155,7 @@ class SHLock(object):  # {{{
         #  to the shared queue and it will give us the lock eventually.
         if self.is_exclusive or self._exclusive_queue:
             if self._exclusive_owner is me:
-                raise LockingError("can't downgrade SHLock object")
+                raise DowngradeLockError("can't downgrade SHLock object")
             if not blocking:
                 return False
             waiter = self._take_waiter()
@@ -208,15 +213,14 @@ class RWLockWrapper(object):
         self._shlock = shlock
         self._is_shared = is_shared
 
-    def __enter__(self):
+    def acquire(self):
         self._shlock.acquire(shared=self._is_shared)
-        return self
 
-    def __exit__(self, *args):
-        self.release()
-
-    def release(self):
+    def release(self, *args):
         self._shlock.release()
+
+    __enter__ = acquire
+    __exit__ = release
 
     def owns_lock(self):
         return self._shlock.owns_lock()
@@ -226,11 +230,11 @@ class DebugRWLockWrapper(RWLockWrapper):
     def __init__(self, *args, **kwargs):
         RWLockWrapper.__init__(self, *args, **kwargs)
 
-    def __enter__(self):
+    def acquire(self):
         print ('#' * 120, file=sys.stderr)
         print ('acquire called: thread id:', current_thread(), 'shared:', self._is_shared, file=sys.stderr)
         traceback.print_stack()
-        RWLockWrapper.__enter__(self)
+        RWLockWrapper.acquire(self)
         print ('acquire done: thread id:', current_thread(), file=sys.stderr)
         print ('_' * 120, file=sys.stderr)
 
@@ -242,4 +246,28 @@ class DebugRWLockWrapper(RWLockWrapper):
         print ('release done: thread id:', current_thread(), 'is_shared:', self._shlock.is_shared, 'is_exclusive:', self._shlock.is_exclusive, file=sys.stderr)
         print ('_' * 120, file=sys.stderr)
 
+    __enter__ = acquire
+    __exit__ = release
 
+class SafeReadLock(object):
+
+    def __init__(self, read_lock):
+        self.read_lock = read_lock
+        self.acquired = False
+
+    def acquire(self):
+        try:
+            self.read_lock.acquire()
+        except DowngradeLockError:
+            pass
+        else:
+            self.acquired = True
+        return self
+
+    def release(self, *args):
+        if self.acquired:
+            self.read_lock.release()
+        self.acquired = False
+
+    __enter__ = acquire
+    __exit__  = release

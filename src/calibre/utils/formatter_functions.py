@@ -589,7 +589,7 @@ class BuiltinCount(BuiltinFormatterFunction):
             'uses an ampersand. Examples: {tags:count(,)}, {authors:count(&)}')
 
     def evaluate(self, formatter, kwargs, mi, locals, val, sep):
-        return unicode(len(val.split(sep)))
+        return unicode(len([v for v in val.split(sep) if v]))
 
 class BuiltinListitem(BuiltinFormatterFunction):
     name = 'list_item'
@@ -1187,7 +1187,7 @@ class BuiltinDaysBetween(BuiltinFormatterFunction):
         except:
             return ''
         i = d1 - d2
-        return str('%d.%d'%(i.days, i.seconds/8640))
+        return '%.1f'%(i.days + (i.seconds/(24.0*60.0*60.0)))
 
 class BuiltinLanguageStrings(BuiltinFormatterFunction):
     name = 'language_strings'

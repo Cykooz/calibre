@@ -301,7 +301,7 @@ class Styles(object):
             if ts is not None:
                 parent_styles.append(ts)
             if direct_formatting.linked_style is not None:
-                ls = self.get(direct_formatting.linked_style).character_style
+                ls = getattr(self.get(direct_formatting.linked_style), 'character_style', None)
                 if ls is not None:
                     parent_styles.append(ls)
             elif default_char is not None and default_char.character_style is not None:
@@ -457,6 +457,8 @@ class Styles(object):
             dl.notes dd { page-break-after: always }
 
             dl.notes dd:last-of-type { page-break-after: avoid }
+
+            span.tab { white-space: pre }
 
             ''') % (self.body_font_family, self.body_font_size, self.body_color)
         if ef:

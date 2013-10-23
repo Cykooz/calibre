@@ -8,7 +8,6 @@ __copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
 
 import itertools, operator, os
 from types import MethodType
-from time import time
 from threading import Event, Thread
 from Queue import LifoQueue
 from functools import wraps, partial
@@ -19,13 +18,14 @@ from PyQt4.Qt import (
     QTimer, QPalette, QColor, QItemSelection, QPixmap, QMenu, QApplication,
     QMimeData, QUrl, QDrag, QPoint, QPainter, QRect, pyqtProperty, QEvent,
     QPropertyAnimation, QEasingCurve, pyqtSlot, QHelpEvent, QAbstractItemView,
-    QStyleOptionViewItem, QToolTip, QByteArray, QBuffer)
+    QStyleOptionViewItem, QToolTip, QByteArray, QBuffer, QBrush)
 
 from calibre import fit_image, prints, prepare_string_for_xml
 from calibre.ebooks.metadata import fmt_sidx
+from calibre.utils import join_with_timeout
 from calibre.gui2 import gprefs, config
 from calibre.gui2.library.caches import CoverCache, ThumbnailCache
-from calibre.utils.config import prefs
+from calibre.utils.config import prefs, tweaks
 
 CM_TO_INCH = 0.393701
 CACHE_FORMAT = 'PPM'
@@ -300,6 +300,10 @@ class AlternateViews(object):
             if self.current_book_state[0] is self.current_view:
                 self.current_view.restore_current_book_state(self.current_book_state[1])
             self.current_book_state = None
+
+    def marked_changed(self, old_marked, current_marked):
+        if self.current_view is not self.main_view:
+            self.current_view.marked_changed(old_marked, current_marked)
 # }}}
 
 # Rendering of covers {{{
@@ -422,7 +426,7 @@ class CoverDelegate(QStyledItemDelegate):
                 try:
                     p = self.marked_emblem
                 except AttributeError:
-                    p = self.marked_emblem = QPixmap(I('rating.png')).scaled(48, 48, transformMode=Qt.SmoothTransformation)
+                    p = self.marked_emblem = m.marked_icon.pixmap(48, 48)
                 drect = QRect(orect)
                 drect.setLeft(drect.left() + right_adjust)
                 drect.setRight(drect.left() + p.width())
@@ -478,17 +482,6 @@ class CoverDelegate(QStyledItemDelegate):
                 return True
         return False
 
-def join_with_timeout(q, timeout=2):
-    q.all_tasks_done.acquire()
-    try:
-        endtime = time() + timeout
-        while q.unfinished_tasks:
-            remaining = endtime - time()
-            if remaining <= 0.0:
-                raise RuntimeError('Waiting for queue to clear timed out')
-            q.all_tasks_done.wait(remaining)
-    finally:
-        q.all_tasks_done.release()
 # }}}
 
 # The View {{{
@@ -562,7 +555,10 @@ class GridView(QListView):
         if d.animating is None and not config['disable_animations']:
             d.animating = index
             d.animation.start()
-        self.gui.iactions['View'].view_triggered(index)
+        if tweaks['doubleclick_on_library_view'] == 'open_viewer':
+            self.gui.iactions['View'].view_triggered(index)
+        elif tweaks['doubleclick_on_library_view'] in {'edit_metadata', 'edit_cell'}:
+            self.gui.iactions['Edit Metadata'].edit_metadata(False, False)
 
     def animation_value_changed(self, value):
         if self.delegate.animating is not None:
@@ -579,6 +575,12 @@ class GridView(QListView):
         pal = QPalette()
         col = QColor(r, g, b)
         pal.setColor(pal.Base, col)
+        tex = gprefs['cover_grid_texture']
+        if tex:
+            from calibre.gui2.preferences.texture_chooser import texture_path
+            path = texture_path(tex)
+            if path:
+                pal.setBrush(pal.Base, QBrush(QPixmap(path)))
         dark = (r + g + b)/3.0 < 128
         pal.setColor(pal.Text, QColor(Qt.white if dark else Qt.black))
         self.setPalette(pal)
@@ -728,6 +730,16 @@ class GridView(QListView):
             sel.merge(QItemSelection(m.index(min(group), 0), m.index(max(group), 0)), sm.Select)
         sm.select(sel, sm.ClearAndSelect)
 
+    def selectAll(self):
+        # We re-implement this to ensure that only indexes from column 0 are
+        # selected. The base class implementation selects all columns. This
+        # causes problems with selection syncing, see
+        # https://bugs.launchpad.net/bugs/1236348
+        m = self.model()
+        sm = self.selectionModel()
+        sel = QItemSelection(m.index(0, 0), m.index(m.rowCount(QModelIndex())-1, 0))
+        sm.select(sel, sm.ClearAndSelect)
+
     def set_current_row(self, row):
         sm = self.selectionModel()
         sm.setCurrentIndex(self.model().index(row, 0), sm.NoUpdate)
@@ -805,4 +817,14 @@ class GridView(QListView):
         self.set_current_row(row)
         self.select_rows((row,))
         self.scrollTo(self.model().index(row, 0), self.PositionAtCenter)
+
+    def marked_changed(self, old_marked, current_marked):
+        changed = old_marked | current_marked
+        m = self.model()
+        for book_id in changed:
+            try:
+                self.update(m.index(m.db.data.id_to_index(book_id), 0))
+            except ValueError:
+                pass
+
 # }}}

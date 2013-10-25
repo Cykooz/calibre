@@ -88,7 +88,7 @@ self_closing_bad_tags = {'a', 'abbr', 'address', 'article', 'aside', 'audio', 'b
 'label', 'legend', 'li', 'map', 'mark', 'meter', 'nav', 'ol', 'output', 'p',
 'pre', 'progress', 'q', 'rp', 'rt', 'samp', 'section', 'select', 'small',
 'span', 'strong', 'sub', 'summary', 'sup', 'textarea', 'time', 'ul', 'var',
-'video'}
+'video', 'title', 'script', 'style'}
 
 _self_closing_pat = re.compile(
     r'<(?P<tag>%s)(?=[\s/])(?P<arg>[^>]*)/>'%('|'.join(self_closing_bad_tags)),
@@ -99,6 +99,12 @@ def close_self_closing_tags(raw):
 
 def uuid_id():
     return 'u'+unicode(uuid.uuid4())
+
+def itercsslinks(raw):
+    for match in _css_url_re.finditer(raw):
+        yield match.group(1), match.start(1)
+    for match in _css_import_re.finditer(raw):
+        yield match.group(1), match.start(1)
 
 def iterlinks(root, find_links_in_css=True):
     '''

@@ -317,8 +317,8 @@ class DB(object):
 
         if iswindows and len(self.library_path) + 4*self.PATH_LIMIT + 10 > 259:
             raise ValueError(_(
-                'Path to library too long. Must be less than'
-                ' %d characters.')%(259-4*self.PATH_LIMIT-10))
+                'Path to library ({0}) too long. Must be less than'
+                ' {1} characters.').format(self.library_path, 259-4*self.PATH_LIMIT-10))
         exists = self._exists = os.path.exists(self.dbpath)
         if not exists:
             # Be more strict when creating new libraries as the old calculation
@@ -1199,14 +1199,18 @@ class DB(object):
     def has_format(self, book_id, fmt, fname, path):
         return self.format_abspath(book_id, fmt, fname, path) is not None
 
-    def remove_format(self, book_id, fmt, fname, path):
-        path = self.format_abspath(book_id, fmt, fname, path)
-        if path is not None:
-            try:
-                delete_service().delete_files((path,), self.library_path)
-            except:
-                import traceback
-                traceback.print_exc()
+    def remove_formats(self, remove_map):
+        paths = []
+        for book_id, removals in remove_map.iteritems():
+            for fmt, fname, path in removals:
+                path = self.format_abspath(book_id, fmt, fname, path)
+                if path is not None:
+                    paths.append(path)
+        try:
+            delete_service().delete_files(paths, self.library_path)
+        except:
+            import traceback
+            traceback.print_exc()
 
     def cover_last_modified(self, path):
         path = os.path.abspath(os.path.join(self.library_path, path, 'cover.jpg'))

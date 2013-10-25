@@ -4,7 +4,7 @@ __license__   = 'GPL v3'
 __copyright__ = '2008, Kovid Goyal kovid@kovidgoyal.net'
 __docformat__ = 'restructuredtext en'
 __appname__   = u'calibre'
-numeric_version = (1, 7, 0)
+numeric_version = (1, 8, 0)
 __version__   = u'.'.join(map(unicode, numeric_version))
 __author__    = u"Kovid Goyal <kovid@kovidgoyal.net>"
 
@@ -52,7 +52,10 @@ def get_osx_version():
         from collections import namedtuple
         OSX = namedtuple('OSX', 'major minor tertiary')
         try:
-            _osx_ver = OSX(*(map(int, platform.mac_ver()[0].split('.'))))
+            ver = platform.mac_ver()[0].split('.')
+            if len(ver) == 2:
+                ver.append(0)
+            _osx_ver = OSX(*(map(int, ver)))
         except:
             _osx_ver = OSX(0, 0, 0)
     return _osx_ver

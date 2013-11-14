@@ -836,7 +836,7 @@ class BrowseServer(object):
         raw = json.dumps('\n'.join(summs), ensure_ascii=True)
         return raw
 
-    def browse_render_details(self, id_, add_random_button=False):
+    def browse_render_details(self, id_, add_random_button=False, add_title=False):
         try:
             mi = self.db.get_metadata(id_, index_is_id=True)
         except:
@@ -880,7 +880,7 @@ class BrowseServer(object):
                             for name, id_typ, id_val, url in urls]
                     links = u', '.join(links)
                     if links:
-                        fields.append((m['name'], u'<strong>%s: </strong>%s'%(
+                        fields.append((field, m['name'], u'<strong>%s: </strong>%s'%(
                             _('Ids'), links)))
                         continue
 
@@ -891,10 +891,15 @@ class BrowseServer(object):
                 else:
                     r = u'<strong>%s: </strong>'%xml(m['name']) + \
                                 args[field]
-                fields.append((m['name'], r))
+                fields.append((field, m['name'], r))
 
-            fields.sort(key=lambda x: sort_key(x[0]))
-            fields = [u'<div class="field">{0}</div>'.format(f[1]) for f in
+            def fsort(x):
+                num = {'authors':0, 'series':1, 'tags':2}.get(x[0], 100)
+                return (num, sort_key(x[-1]))
+            fields.sort(key=fsort)
+            if add_title:
+                fields.insert(0, ('title', 'Title', u'<strong>%s: </strong>%s' % (xml(_('Title')), xml(mi.title))))
+            fields = [u'<div class="field">{0}</div>'.format(f[-1]) for f in
                     fields]
             fields = u'<div class="fields">%s</div>'%('\n\n'.join(fields))
 
@@ -934,9 +939,9 @@ class BrowseServer(object):
             book_id = random.choice(self.search_for_books(''))
         except IndexError:
             raise cherrypy.HTTPError(404, 'This library has no books')
-        ans = self.browse_render_details(book_id, add_random_button=True)
+        ans = self.browse_render_details(book_id, add_random_button=True, add_title=True)
         return self.browse_template('').format(
-                title='', script='book();', main=ans)
+                title=prepare_string_for_xml(self.db.title(book_id, index_is_id=True)), script='book();', main=ans)
 
     @Endpoint()
     def browse_book(self, id=None, category_sort=None):
@@ -945,9 +950,9 @@ class BrowseServer(object):
         except:
             raise cherrypy.HTTPError(404, 'invalid id: %r'%id)
 
-        ans = self.browse_render_details(id_)
+        ans = self.browse_render_details(id_, add_title=True)
         return self.browse_template('').format(
-                title='', script='book();', main=ans)
+                title=prepare_string_for_xml(self.db.title(id_, index_is_id=True)), script='book();', main=ans)
 
     # }}}
 

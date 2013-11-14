@@ -17,13 +17,19 @@ from calibre import prints
 from calibre.ptempfile import PersistentTemporaryDirectory
 from calibre.ebooks.oeb.base import urlnormalize
 from calibre.ebooks.oeb.polish.main import SUPPORTED
-from calibre.ebooks.oeb.polish.container import get_container, clone_container, guess_type
+from calibre.ebooks.oeb.polish.container import get_container as _gc, clone_container, guess_type
 from calibre.ebooks.oeb.polish.replace import rename_files
 from calibre.gui2 import error_dialog, choose_files, question_dialog, info_dialog
 from calibre.gui2.dialogs.confirm_delete import confirm
-from calibre.gui2.tweak_book import set_current_container, current_container, tprefs
+from calibre.gui2.tweak_book import set_current_container, current_container, tprefs, actions, editors
 from calibre.gui2.tweak_book.undo import GlobalUndoHistory
 from calibre.gui2.tweak_book.save import SaveManager
+from calibre.gui2.tweak_book.preview import parse_worker
+from calibre.gui2.tweak_book.editor import editor_from_syntax, syntax_from_mime
+
+def get_container(*args, **kwargs):
+    kwargs['tweak_mode'] = True
+    return _gc(*args, **kwargs)
 
 class Boss(QObject):
 
@@ -42,14 +48,21 @@ class Boss(QObject):
         fl.delete_requested.connect(self.delete_requested)
         fl.reorder_spine.connect(self.reorder_spine)
         fl.rename_requested.connect(self.rename_requested)
+        fl.edit_file.connect(self.edit_file_requested)
+        self.gui.central.current_editor_changed.connect(self.apply_current_editor_state)
+        self.gui.central.close_requested.connect(self.editor_close_requested)
 
-    def mkdtemp(self):
+    def mkdtemp(self, prefix=''):
         self.container_count += 1
-        return tempfile.mkdtemp(prefix='%05d-' % self.container_count, dir=self.tdir)
+        return tempfile.mkdtemp(prefix='%s%05d-' % (prefix, self.container_count), dir=self.tdir)
 
     def check_dirtied(self):
-        # TODO: Implement this
-        return True
+        dirtied = {name for name, ed in editors.iteritems() if ed.is_modified}
+        if not dirtied:
+            return True
+        return question_dialog(self.gui, _('Unsaved changes'), _(
+            'You have unsaved changes in the files %s. If you proceed,'
+            ' you will lose them. Proceed anyway?') % ', '.join(dirtied))
 
     def open_book(self, path=None):
         if not self.check_dirtied():
@@ -73,6 +86,9 @@ class Boss(QObject):
                   ' Convert your book to one of these formats first.') % _(' and ').join(sorted(SUPPORTED)),
                 show=True)
 
+        for name in editors:
+            self.close_editor(name)
+        self.gui.preview.clear()
         self.container_count = -1
         if self.tdir:
             shutil.rmtree(self.tdir, ignore_errors=True)
@@ -84,6 +100,7 @@ class Boss(QObject):
             return error_dialog(self.gui, _('Failed to open book'),
                     _('Failed to open book, click Show details for more information.'),
                                 det_msg=job.traceback, show=True)
+        parse_worker.clear()
         container = job.result
         set_current_container(container)
         self.current_metadata = self.gui.current_metadata = container.mi
@@ -93,43 +110,12 @@ class Boss(QObject):
         self.gui.action_save.setEnabled(False)
         self.update_global_history_actions()
 
-    def update_global_history_actions(self):
-        gu = self.global_undo
-        for x, text in (('undo', _('&Revert to before')), ('redo', '&Revert to after')):
-            ac = getattr(self.gui, 'action_global_%s' % x)
-            ac.setEnabled(getattr(gu, 'can_' + x))
-            ac.setText(text + ' ' + (getattr(gu, x + '_msg') or '...'))
-
-    def add_savepoint(self, msg):
-        nc = clone_container(current_container(), self.mkdtemp())
-        self.global_undo.add_savepoint(nc, msg)
-        set_current_container(nc)
-        self.update_global_history_actions()
-
-    def rewind_savepoint(self):
-        container = self.global_undo.rewind_savepoint()
-        if container is not None:
-            set_current_container(container)
-            self.update_global_history_actions()
-
     def apply_container_update_to_gui(self):
         container = current_container()
         self.gui.file_list.build(container)
         self.update_global_history_actions()
         self.gui.action_save.setEnabled(True)
         # TODO: Apply to other GUI elements
-
-    def do_global_undo(self):
-        container = self.global_undo.undo()
-        if container is not None:
-            set_current_container(container)
-            self.apply_container_update_to_gui()
-
-    def do_global_redo(self):
-        container = self.global_undo.redo()
-        if container is not None:
-            set_current_container(container)
-            self.apply_container_update_to_gui()
 
     def delete_requested(self, spine_items, other_items):
         if not self.check_dirtied():
@@ -141,6 +127,9 @@ class Boss(QObject):
             c.remove_item(name)
         self.gui.action_save.setEnabled(True)
         self.gui.file_list.delete_done(spine_items, other_items)
+        for name in list(spine_items) + list(other_items):
+            if name in editors:
+                self.close_editor(name)
         # TODO: Update other GUI elements
 
     def reorder_spine(self, items):
@@ -153,6 +142,7 @@ class Boss(QObject):
         self.gui.file_list.build(current_container())  # needed as the linear flag may have changed on some items
         # TODO: If content.opf is open in an editor, reload it
 
+    # Renaming {{{
     def rename_requested(self, oldname, newname):
         if not self.check_dirtied():
             return
@@ -187,11 +177,51 @@ class Boss(QObject):
         self.gui.file_list.build(current_container())
         self.gui.action_save.setEnabled(True)
         # TODO: Update the rest of the GUI
+    # }}}
+
+    # Global history {{{
+    def do_global_undo(self):
+        container = self.global_undo.undo()
+        if container is not None:
+            set_current_container(container)
+            self.apply_container_update_to_gui()
+
+    def do_global_redo(self):
+        container = self.global_undo.redo()
+        if container is not None:
+            set_current_container(container)
+            self.apply_container_update_to_gui()
+
+    def update_global_history_actions(self):
+        gu = self.global_undo
+        for x, text in (('undo', _('&Revert to before')), ('redo', '&Revert to after')):
+            ac = getattr(self.gui, 'action_global_%s' % x)
+            ac.setEnabled(getattr(gu, 'can_' + x))
+            ac.setText(text + ' ' + (getattr(gu, x + '_msg') or '...'))
+
+    def add_savepoint(self, msg):
+        nc = clone_container(current_container(), self.mkdtemp())
+        self.global_undo.add_savepoint(nc, msg)
+        set_current_container(nc)
+        self.update_global_history_actions()
+
+    def rewind_savepoint(self):
+        container = self.global_undo.rewind_savepoint()
+        if container is not None:
+            set_current_container(container)
+            self.update_global_history_actions()
+    # }}}
 
     def save_book(self):
+        c = current_container()
+        for name, ed in editors.iteritems():
+            if ed.is_modified:
+                with c.open(name, 'wb') as f:
+                    f.write(ed.data)
+                ed.is_modified = False
         self.gui.action_save.setEnabled(False)
-        tdir = tempfile.mkdtemp(prefix='save-%05d-' % self.container_count, dir=self.tdir)
-        container = clone_container(current_container(), tdir)
+        tdir = self.mkdtemp(prefix='save-')
+        container = clone_container(c, tdir)
         self.save_manager.schedule(tdir, container)
 
     def report_save_error(self, tb):
@@ -202,6 +232,136 @@ class Boss(QObject):
                      _('Saving of the book failed. Click "Show Details"'
                        ' for more information.'), det_msg=tb, show=True)
 
+    def edit_file(self, name, syntax):
+        editor = editors.get(name, None)
+        if editor is None:
+            editor = editors[name] = editor_from_syntax(syntax, self.gui.editor_tabs)
+            editor.undo_redo_state_changed.connect(self.editor_undo_redo_state_changed)
+            editor.data_changed.connect(self.editor_data_changed)
+            editor.copy_available_state_changed.connect(self.editor_copy_available_state_changed)
+            c = current_container()
+            with c.open(name) as f:
+                editor.data = c.decode(f.read())
+            editor.modification_state_changed.connect(self.editor_modification_state_changed)
+            self.gui.central.add_editor(name, editor)
+        self.gui.central.show_editor(editor)
+
+    def edit_file_requested(self, name, syntax, mime):
+        if name in editors:
+            self.gui.central.show_editor(editors[name])
+            return
+        syntax = syntax or syntax_from_mime(mime)
+        if not syntax:
+            return error_dialog(
+                self.gui, _('Unsupported file format'),
+                _('Editing files of type %s is not supported' % mime), show=True)
+        self.edit_file(name, syntax)
+
+    # Editor basic controls {{{
+    def do_editor_undo(self):
+        ed = self.gui.central.current_editor
+        if ed is not None:
+            ed.undo()
+
+    def do_editor_redo(self):
+        ed = self.gui.central.current_editor
+        if ed is not None:
+            ed.redo()
+
+    def do_editor_copy(self):
+        ed = self.gui.central.current_editor
+        if ed is not None:
+            ed.copy()
+
+    def do_editor_cut(self):
+        ed = self.gui.central.current_editor
+        if ed is not None:
+            ed.cut()
+
+    def do_editor_paste(self):
+        ed = self.gui.central.current_editor
+        if ed is not None:
+            ed.paste()
+
+    def editor_data_changed(self, editor):
+        self.gui.preview.refresh_timer.start(tprefs['preview_refresh_time'] * 1000)
+
+    def editor_undo_redo_state_changed(self, *args):
+        self.apply_current_editor_state(update_keymap=False)
+
+    def editor_copy_available_state_changed(self, *args):
+        self.apply_current_editor_state(update_keymap=False)
+
+    def editor_modification_state_changed(self, is_modified):
+        self.apply_current_editor_state(update_keymap=False)
+        if is_modified:
+            actions['save-book'].setEnabled(True)
+    # }}}
+
+    def apply_current_editor_state(self, update_keymap=True):
+        ed = self.gui.central.current_editor
+        if ed is not None:
+            actions['editor-undo'].setEnabled(ed.undo_available)
+            actions['editor-redo'].setEnabled(ed.redo_available)
+            actions['editor-save'].setEnabled(ed.is_modified)
+            actions['editor-cut'].setEnabled(ed.copy_available)
+            actions['editor-copy'].setEnabled(ed.cut_available)
+            self.gui.keyboard.set_mode(ed.syntax)
+            name = None
+            for n, x in editors.iteritems():
+                if ed is x:
+                    name = n
+                    break
+            if name is not None and getattr(ed, 'syntax', None) == 'html':
+                self.gui.preview.show(name)
+        else:
+            self.gui.keyboard.set_mode('other')
+
+    def editor_close_requested(self, editor):
+        name = None
+        for n, ed in editors.iteritems():
+            if ed is editor:
+                name = n
+        if not name:
+            return
+        if editor.is_modified:
+            if not question_dialog(self.gui, _('Unsaved changes'), _(
+                'There are unsaved changes in %s. Are you sure you want to close'
+                ' this editor?') % name):
+                return
+        self.close_editor(name)
+
+    def close_editor(self, name):
+        editor = editors.pop(name)
+        self.gui.central.close_editor(editor)
+        editor.break_cycles()
+
+    def do_editor_save(self):
+        ed = self.gui.central.current_editor
+        if ed is None:
+            return
+        name = None
+        for n, x in editors.iteritems():
+            if x is ed:
+                name = n
+                break
+        if name is None:
+            return
+        c = current_container()
+        with c.open(name, 'wb') as f:
+            f.write(ed.data)
+        ed.is_modified = False
+        tdir = self.mkdtemp(prefix='save-')
+        container = clone_container(c, tdir)
+        self.save_manager.schedule(tdir, container)
+        is_modified = False
+        for ed in editors.itervalues():
+            if ed.is_modified:
+                is_modified = True
+                break
+        self.gui.action_save.setEnabled(is_modified)
+
+    # Shutdown {{{
     def quit(self):
         if not self.confirm_quit():
             return
@@ -264,10 +424,14 @@ class Boss(QObject):
         QApplication.instance().quit()
 
     def shutdown(self):
+        self.gui.preview.refresh_timer.stop()
         self.save_state()
         self.save_manager.shutdown()
+        parse_worker.shutdown()
         self.save_manager.wait(0.1)
 
     def save_state(self):
         with tprefs:
             self.gui.save_state()
+    # }}}
+

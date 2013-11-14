@@ -688,6 +688,9 @@ class Editor(QWidget):  # {{{
         self.code_edit.textChanged.connect(self.code_dirtied)
         self.editor.page().contentsChanged.connect(self.wyswyg_dirtied)
 
+    def set_minimum_height_for_editor(self, val):
+        self.editor.setMinimumHeight(val)
+
     @dynamic_property
     def html(self):
         def fset(self, v):
@@ -736,4 +739,5 @@ if __name__ == '__main__':
     w.html = '<b>testing</b>'
     app.exec_()
     # print w.html
+
 

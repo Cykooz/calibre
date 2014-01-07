@@ -9,8 +9,9 @@ __docformat__ = 'restructuredtext en'
 
 import re
 from urlparse import urlparse
-from collections import deque, Counter
+from collections import deque, Counter, OrderedDict
 from functools import partial
+from operator import itemgetter
 
 from lxml import etree
 
@@ -43,6 +44,16 @@ class TOC(object):
     def remove(self, child):
         self.children.remove(child)
         child.parent = None
+
+    def remove_from_parent(self):
+        if self.parent is None:
+            return
+        idx = self.parent.children.index(self)
+        for child in reversed(self.children):
+            child.parent = self.parent
+            self.parent.children.insert(idx, child)
+        self.parent.children.remove(self)
+        self.parent = None
 
     def __iter__(self):
         for c in self.children:
@@ -200,16 +211,54 @@ def elem_to_toc_text(elem):
         text = _('(Untitled)')
     return text
 
+def item_at_top(elem):
+    try:
+        body = XPath('//h:body')(elem.getroottree().getroot())[0]
+    except (TypeError, IndexError, KeyError, AttributeError):
+        return False
+    tree = body.getroottree()
+    path = tree.getpath(elem)
+    for el in body.iterdescendants(etree.Element):
+        epath = tree.getpath(el)
+        if epath == path:
+            break
+        try:
+            if el.tag.endswith('}img') or (el.text and el.text.strip()):
+                return False
+        except:
+            return False
+        if not path.startswith(epath):
+            # Only check tail of non-parent elements
+            if el.tail and el.tail.strip():
+                return False
+    return True
+
 def from_xpaths(container, xpaths):
     tocroot = TOC()
     xpaths = [XPath(xp) for xp in xpaths]
     level_prev = {i+1:None for i in xrange(len(xpaths))}
     level_prev[0] = tocroot
 
+    # Find those levels that have no elements in all spine items
+    maps = OrderedDict()
+    empty_levels = {i+1 for i, xp in enumerate(xpaths)}
     for spinepath in container.spine_items:
         name = container.abspath_to_name(spinepath)
         root = container.parsed(name)
-        level_item_map = {i+1:frozenset(xp(root)) for i, xp in enumerate(xpaths)}
+        level_item_map = maps[name] = {i+1:frozenset(xp(root)) for i, xp in enumerate(xpaths)}
+        for lvl, elems in level_item_map.iteritems():
+            if elems:
+                empty_levels.discard(lvl)
+    # Remove empty levels from all level_maps
+    if empty_levels:
+        for name, lmap in tuple(maps.iteritems()):
+            lmap = {lvl:items for lvl, items in lmap.iteritems() if lvl not in empty_levels}
+            lmap = sorted(lmap.iteritems(), key=itemgetter(0))
+            lmap = {i+1:items for i, (l, items) in enumerate(lmap)}
+            maps[name] = lmap
+
+    for name, level_item_map in maps.iteritems():
+        root = container.parsed(name)
         item_level_map = {e:i for i, elems in level_item_map.iteritems() for e in elems}
         item_dirtied = False
 
@@ -222,7 +271,10 @@ def from_xpaths(container, xpaths):
                 plvl -= 1
                 parent = level_prev[plvl]
             lvl = plvl + 1
-            dirtied, elem_id = ensure_id(item)
+            if item_at_top(item):
+                dirtied, elem_id = False, None
+            else:
+                dirtied, elem_id = ensure_id(item)
             text = elem_to_toc_text(item)
             item_dirtied = dirtied or item_dirtied
             toc = parent.add(text, name, elem_id)
@@ -295,8 +347,7 @@ def from_files(container):
         toc.add(text, name)
     return toc
 
-def add_id(container, name, loc):
-    root = container.parsed(name)
+def node_from_loc(root, loc):
     body = root.xpath('//*[local-name()="body"]')[0]
     locs = deque(loc)
     node = body
@@ -304,10 +355,14 @@ def add_id(container, name, loc):
         children = tuple(node.iterchildren(etree.Element))
         node = children[locs[0]]
         locs.popleft()
+    return node
+
+def add_id(container, name, loc):
+    root = container.parsed(name)
+    node = node_from_loc(root, loc)
     node.set('id', node.get('id', uuid_id()))
     container.commit_item(name, keep_parsed=True)
     return node.get('id')
-
 
 def create_ncx(toc, to_href, btitle, lang, uid):
     lang = lang.replace('_', '-')
@@ -387,3 +442,18 @@ def commit_toc(container, toc, lang=None, uid=None):
     container.replace(tocname, root)
     container.pretty_print.add(tocname)
 
+def remove_names_from_toc(container, names):
+    toc = get_toc(container)
+    if len(toc) == 0:
+        return False
+    remove = []
+    names = frozenset(names)
+    for node in toc.iterdescendants():
+        if node.dest in names:
+            remove.append(node)
+    if remove:
+        for node in reversed(remove):
+            node.remove_from_parent()
+        commit_toc(container, toc)
+        return True
+    return False

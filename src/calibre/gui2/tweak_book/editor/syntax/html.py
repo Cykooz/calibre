@@ -9,8 +9,9 @@ __copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
 import re
 from functools import partial
 
-from PyQt4.Qt import (QTextCharFormat, QFont)
+from PyQt4.Qt import QFont
 
+from calibre.gui2.tweak_book.editor import SyntaxTextCharFormat
 from calibre.gui2.tweak_book.editor.syntax.base import SyntaxHighlighter, run_loop
 from calibre.gui2.tweak_book.editor.syntax.css import create_formats as create_css_formats, state_map as css_state_map, State as CSSState
 
@@ -27,7 +28,7 @@ attribute_name_pat = re.compile(r'''[^%s"'/><=]+''' % space_chars)
 self_closing_pat = re.compile(r'/\s*>')
 unquoted_val_pat = re.compile(r'''[^%s'"=<>`]+''' % space_chars)
 cdata_close_pats = {x:re.compile(r'</%s' % x, flags=re.I) for x in cdata_tags}
-nbsp_pat = re.compile('\xa0+')
+nbsp_pat = re.compile('[\xa0\u2000-\u200A\u202F\u205F\u3000\u2011-\u2015\uFE58\uFE63\uFF0D]+')  # special spaces and hyphens
 
 class State(object):
 
@@ -109,7 +110,7 @@ def mark_nbsp(state, text, nbsp_format):
     ans = []
     fmt = None
     if state.bold or state.italic:
-        fmt = QTextCharFormat()
+        fmt = SyntaxTextCharFormat()
         if state.bold:
             fmt.setFontWeight(QFont.Bold)
         if state.italic:
@@ -302,7 +303,7 @@ def create_formats(highlighter):
         'string': t['String'],
         'nsprefix': t['Constant'],
         'preproc': t['PreProc'],
-        'nbsp': t['CursorLine'],
+        'nbsp': t['SpecialCharacter'],
     }
     for name, msg in {
         '<': _('An unescaped < is not allowed. Replace it with &lt;'),
@@ -313,9 +314,9 @@ def create_formats(highlighter):
         'bad-closing': _('A closing tag must contain only the tag name and nothing else'),
         'no-attr-value': _('Expecting an attribute value'),
     }.iteritems():
-        f = formats[name] = QTextCharFormat(formats['error'])
+        f = formats[name] = SyntaxTextCharFormat(formats['error'])
         f.setToolTip(msg)
-    f = formats['title'] = QTextCharFormat()
+    f = formats['title'] = SyntaxTextCharFormat()
     f.setFontWeight(QFont.Bold)
     return formats
 
@@ -365,7 +366,7 @@ if __name__ == '__main__':
         <svg:svg xmlns:svg="http://whatever" />
         <input disabled><input disabled /><span attr=<></span>
         <!-- Non-breaking spaces are rendered differently from normal spaces, so that they stand out -->
-        <p>Some\xa0words\xa0separated\xa0by\xa0non-breaking\xa0spaces.</p>
+        <p>Some\xa0words\xa0separated\xa0by\xa0non\u2011breaking\xa0spaces and non\u2011breaking hyphens.</p>
     </body>
 </html>
 ''', path_is_raw=True)

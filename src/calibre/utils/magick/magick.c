@@ -537,6 +537,35 @@ magick_Image_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
     return (PyObject *)self;
 }
 
+// Image.constitute {{{
+static PyObject *
+magick_Image_constitute(magick_Image *self, PyObject *args) {
+    const char *map;
+	Py_ssize_t width, height;
+    PyObject *capsule;
+    MagickBooleanType res;
+    void *data;
+    
+    NULL_CHECK(NULL)
+    if (!PyArg_ParseTuple(args, "iisO", &width, &height, &map, &capsule)) return NULL;
+
+    if (!PyCapsule_CheckExact(capsule)) {
+        PyErr_SetString(PyExc_TypeError, "data is not a capsule object");
+        return NULL;
+    }
+
+    data = PyCapsule_GetPointer(capsule,  PyCapsule_GetName(capsule));
+    if (data == NULL) return NULL;
+
+    res = MagickConstituteImage(self->wand, width, height, map, CharPixel, data);
+
+    if (!res)
+        return magick_set_exception(self->wand);
+
+    Py_RETURN_NONE;
+}
+
+// }}}
 
 // Image.load {{{
 static PyObject *
@@ -1125,6 +1154,22 @@ magick_Image_sharpen(magick_Image *self, PyObject *args) {
 }
 // }}}
 
+// Image.blur {{{
+
+static PyObject *
+magick_Image_blur(magick_Image *self, PyObject *args) {
+    double radius, sigma;
+   
+    NULL_CHECK(NULL)
+
+    if (!PyArg_ParseTuple(args, "dd", &radius, &sigma)) return NULL;
+
+    if (!MagickBlurImage(self->wand, radius, sigma)) return magick_set_exception(self->wand);
+
+    Py_RETURN_NONE;
+}
+// }}}
+
 // Image.quantize {{{
 
 static PyObject *
@@ -1296,6 +1341,10 @@ static PyMethodDef magick_Image_methods[] = {
      "Identify an image from a byte buffer (string)"
     },
 
+    {"constitute", (PyCFunction)magick_Image_constitute, METH_VARARGS,
+     "constitute(width, height, map, data) -> Create an image from raw (A)RGB data. map should be 'ARGB' or 'PRGB' or whatever is needed for data. data must be a PyCapsule object."
+    },
+
     {"load", (PyCFunction)magick_Image_load, METH_VARARGS,
      "Load an image from a byte buffer (string)"
     },
@@ -1398,8 +1447,12 @@ static PyMethodDef magick_Image_methods[] = {
      "sharpen(radius, sigma) \n\n sharpens an image. We convolve the image with a Gaussian operator of the given radius and standard deviation (sigma). For reasonable results, the radius should be larger than sigma. Use a radius of 0 and MagickSharpenImage() selects a suitable radius for you." 
     },
 
+    {"blur", (PyCFunction)magick_Image_blur, METH_VARARGS,
+     "blur(radius, sigma) \n\n blurs an image. We convolve the image with a Gaussian operator of the given radius and standard deviation (sigma). For reasonable results, the radius should be larger than sigma. Use a radius of 0 and MagickBlurImage() selects a suitable radius for you." 
+    },
+
     {"despeckle", (PyCFunction)magick_Image_despeckle, METH_VARARGS,
-     "despeckle() \n\n reduces the speckle noise in an image while perserving the edges of the original image." 
+     "despeckle() \n\n reduces the speckle noise in an image while preserving the edges of the original image." 
     },
 
     {"quantize", (PyCFunction)magick_Image_quantize, METH_VARARGS,

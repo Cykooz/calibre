@@ -8,9 +8,8 @@ __copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
 
 import re
 
+from calibre.gui2.tweak_book.editor import SyntaxTextCharFormat
 from calibre.gui2.tweak_book.editor.syntax.base import SyntaxHighlighter
-
-from PyQt4.Qt import QTextCharFormat
 
 space_pat = re.compile(r'[ \n\t\r\f]+')
 cdo_pat = re.compile(r'/\*')
@@ -30,8 +29,8 @@ content_tokens = [(re.compile(k), v, n) for k, v, n in [
     r'background-image|background-position|background-repeat|'
     r'background|border-bottom-color|border-bottom-style|'
     r'border-bottom-width|border-left-color|border-left-style|'
-    r'border-left-width|border-right|border-right-color|'
-    r'border-right-style|border-right-width|border-top-color|'
+    r'border-left-width|border-right-color|'
+    r'border-right-style|border-right-width|border-right|border-top-color|'
     r'border-top-style|border-top-width|border-bottom|'
     r'border-collapse|border-left|border-width|border-color|'
     r'border-spacing|border-style|border-top|border|caption-side|'
@@ -39,16 +38,16 @@ content_tokens = [(re.compile(k), v, n) for k, v, n in [
     r'cue-after|cue-before|cue|cursor|direction|display|'
     r'elevation|empty-cells|float|font-family|font-size|'
     r'font-size-adjust|font-stretch|font-style|font-variant|'
-    r'font-weight|font|height|letter-spacing|line-height|'
+    r'font-weight|font|height|letter-spacing|line-height|panose-1|'
     r'list-style-type|list-style-image|list-style-position|'
     r'list-style|margin-bottom|margin-left|margin-right|'
     r'margin-top|margin|marker-offset|marks|max-height|max-width|'
     r'min-height|min-width|opacity|orphans|outline|outline-color|'
     r'outline-style|outline-width|overflow(?:-x|-y)?|padding-bottom|'
-    r'padding-left|padding-right|padding-top|padding|page|'
+    r'padding-left|padding-right|padding-top|padding|'
     r'page-break-after|page-break-before|page-break-inside|'
     r'pause-after|pause-before|pause|pitch|pitch-range|'
-    r'play-during|position|quotes|richness|right|size|'
+    r'play-during|position|pre-wrap|pre-line|pre|quotes|richness|right|size|'
     r'speak-header|speak-numeral|speak-punctuation|speak|'
     r'speech-rate|stress|table-layout|text-align|text-decoration|'
     r'text-indent|text-shadow|text-transform|top|unicode-bidi|'
@@ -75,10 +74,10 @@ content_tokens = [(re.compile(k), v, n) for k, v, n in [
     r'rightwards|s-resize|sans-serif|scroll|se-resize|'
     r'semi-condensed|semi-expanded|separate|serif|show|silent|'
     r'slow|slower|small-caps|small-caption|smaller|soft|solid|'
-    r'spell-out|square|static|status-bar|super|sw-resize|'
+    r'spell-out|square|static|status-bar|super|sub|sw-resize|'
     r'table-caption|table-cell|table-column|table-column-group|'
-    r'table-footer-group|table-header-group|table-row|'
-    r'table-row-group|text|text-bottom|text-top|thick|thin|'
+    r'table-footer-group|table-header-group|'
+    r'table-row-group|table-row|table|text|text-bottom|text-top|thick|thin|'
     r'transparent|ultra-condensed|ultra-expanded|underline|'
     r'upper-alpha|upper-latin|upper-roman|uppercase|url|'
     r'visible|w-resize|wait|wider|x-fast|x-high|x-large|x-loud|'
@@ -111,7 +110,7 @@ content_tokens = [(re.compile(k), v, n) for k, v, n in [
     (r'\!important', 'preproc', 'important'),
     (r'\#[a-zA-Z0-9]{1,6}', 'number', 'hexnumber'),
     (r'[\.-]?[0-9]*[\.]?[0-9]+(em|px|pt|pc|in|mm|cm|ex|s|rem)\b', 'number', 'dimension'),
-    (r'[\.-]?[0-9]*[\.]?[0-9]+%($|[ \n\t\f\r;}{()\[\]])', 'number', 'dimension'),
+    (r'[\.-]?[0-9]*[\.]?[0-9]+%(?=$|[ \n\t\f\r;}{()\[\]])', 'number', 'dimension'),
     (r'-?[0-9]+', 'number', 'number'),
     (r'[~\^\*!%&<>\|+=@:,./?-]+', 'operator', 'operator'),
     (r'[\[\]();]+', 'bracket', 'bracket'),
@@ -122,10 +121,11 @@ content_tokens = [(re.compile(k), v, n) for k, v, n in [
 class State(object):
 
     NORMAL = 0
-    IN_COMMENT = 1
+    IN_COMMENT_NORMAL = 1
     IN_SQS = 2
     IN_DQS = 3
     IN_CONTENT = 4
+    IN_COMMENT_CONTENT = 5
 
     def __init__(self, num):
         self.parse  = num & 0b1111
@@ -143,7 +143,7 @@ def normal(state, text, i, formats):
         return [(len(m.group()), None)]
     cdo = cdo_pat.match(text, i)
     if cdo is not None:
-        state.parse = State.IN_COMMENT
+        state.parse = State.IN_COMMENT_NORMAL
         return [(len(cdo.group()), formats['comment'])]
     if text[i] == '"':
         state.parse = State.IN_DQS
@@ -169,7 +169,7 @@ def content(state, text, i, formats):
         return [(len(m.group()), None)]
     cdo = cdo_pat.match(text, i)
     if cdo is not None:
-        state.parse = State.IN_COMMENT
+        state.parse = State.IN_COMMENT_CONTENT
         return [(len(cdo.group()), formats['comment'])]
     if text[i] == '"':
         state.parse = State.IN_DQS
@@ -196,7 +196,7 @@ def comment(state, text, i, formats):
     pos = text.find('*/', i)
     if pos == -1:
         return [(len(text), formats['comment'])]
-    state.parse = State.NORMAL
+    state.parse = State.NORMAL if state.parse == State.IN_COMMENT_NORMAL else State.IN_CONTENT
     return [(pos - i + 2, formats['comment'])]
 
 def in_string(state, text, i, formats):
@@ -214,7 +214,8 @@ def in_string(state, text, i, formats):
 
 state_map = {
     State.NORMAL:normal,
-    State.IN_COMMENT: comment,
+    State.IN_COMMENT_NORMAL: comment,
+    State.IN_COMMENT_CONTENT: comment,
     State.IN_SQS: in_string,
     State.IN_DQS: in_string,
     State.IN_CONTENT: content,
@@ -242,7 +243,7 @@ def create_formats(highlighter):
         'unknown-normal': _('Invalid text'),
         'unterminated-string': _('Unterminated string'),
     }.iteritems():
-        f = formats[name] = QTextCharFormat(formats['error'])
+        f = formats[name] = SyntaxTextCharFormat(formats['error'])
         f.setToolTip(msg)
     return formats
 

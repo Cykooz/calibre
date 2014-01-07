@@ -7,9 +7,11 @@ __license__   = 'GPL v3'
 __copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
-import codecs
+import codecs, shutil, os
 from urlparse import urlparse
+from collections import Counter, defaultdict
 
+from calibre import sanitize_file_name_unicode
 from calibre.ebooks.chardet import strip_encoding_declarations
 
 class LinkReplacer(object):
@@ -78,6 +80,7 @@ def replace_links(container, link_map, frag_map=lambda name, frag:frag, replace_
 
 def smarten_punctuation(container, report):
     from calibre.ebooks.conversion.preprocess import smarten_punctuation
+    smartened = False
     for path in container.spine_items:
         name = container.abspath_to_name(path)
         changed = False
@@ -98,6 +101,9 @@ def smarten_punctuation(container, report):
             for m in root.xpath('descendant::*[local-name()="meta" and @http-equiv]'):
                 m.getparent().remove(m)
             container.dirty(name)
+            smartened = True
+    if not smartened:
+        report(_('No punctuation that could be smartened found'))
 
 def rename_files(container, file_map):
     overlap = set(file_map).intersection(set(file_map.itervalues()))
@@ -105,6 +111,9 @@ def rename_files(container, file_map):
         raise ValueError('Circular rename detected. The files %s are both rename targets and destinations' % ', '.join(overlap))
     for name, dest in file_map.iteritems():
         if container.exists(dest):
+            if name != dest and name.lower() == dest.lower():
+                # A case change on an OS with a case insensitive file-system.
+                continue
             raise ValueError('Cannot rename {0} to {1} as {1} already exists'.format(name, dest))
     if len(tuple(file_map.itervalues())) != len(set(file_map.itervalues())):
         raise ValueError('Cannot rename, the set of destination files contains duplicates')
@@ -115,3 +124,47 @@ def rename_files(container, file_map):
             link_map[current_name] = new_name
     replace_links(container, link_map, replace_in_opf=True)
 
+def replace_file(container, name, path, basename, force_mt=None):
+    dirname, base = name.rpartition('/')[0::2]
+    nname = sanitize_file_name_unicode(basename)
+    if dirname:
+        nname = dirname + '/' + nname
+    with open(path, 'rb') as src:
+        if name != nname:
+            count = 0
+            b, e = nname.rpartition('.')[0::2]
+            while container.exists(nname):
+                count += 1
+                nname = b + ('_%d.%s' % (count, e))
+            rename_files(container, {name:nname})
+            mt = force_mt or container.guess_type(nname)
+            for itemid, q in container.manifest_id_map.iteritems():
+                if q == nname:
+                    for item in container.opf_xpath('//opf:manifest/opf:item[@href and @id="%s"]' % itemid):
+                        item.set('media-type', mt)
+        container.dirty(container.opf_name)
+        with container.open(nname, 'wb') as dest:
+            shutil.copyfileobj(src, dest)
+
+def get_recommended_folders(container, names):
+    ' Return the folders that are recommended for the given filenames '
+    from calibre.ebooks.oeb.polish.container import guess_type, OEB_FONTS
+    from calibre.ebooks.oeb.base import OEB_DOCS, OEB_STYLES
+    counts = defaultdict(Counter)
+    def mt_to_category(mt):
+        if mt in OEB_DOCS:
+            category = 'text'
+        elif mt in OEB_STYLES:
+            category = 'style'
+        elif mt in OEB_FONTS:
+            category = 'font'
+        else:
+            category = mt.partition('/')[0]
+        return category
+
+    for name, mt in container.mime_map.iteritems():
+        folder = name.rpartition('/')[0] if '/' in name else ''
+        counts[mt_to_category(mt)][folder] += 1
+
+    recommendations = {category:counter.most_common(1)[0][0] for category, counter in counts.iteritems()}
+    return {n:recommendations.get(mt_to_category(guess_type(os.path.basename(n))), '') for n in names}

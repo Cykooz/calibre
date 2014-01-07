@@ -155,15 +155,13 @@ def get_category_items(category, items, datatype, prefix):  # {{{
                 '<div>{1}</div>'
                 '<div>{2}</div></div>')
         rating, rstring = render_rating(i.avg_rating, prefix)
-        if i.use_sort_as_name:
-            name = xml(i.sort)
-        else:
-            name = xml(i.name)
+        orig_name = i.sort if i.use_sort_as_name else i.name
+        name = xml(orig_name)
         if datatype == 'rating':
             name = xml(_('%d stars')%int(i.avg_rating))
         id_ = i.id
         if id_ is None:
-            id_ = hexlify(force_unicode(name).encode('utf-8'))
+            id_ = hexlify(force_unicode(orig_name).encode('utf-8'))
         id_ = xml(str(id_))
         desc = ''
         if i.count > 0:
@@ -675,6 +673,7 @@ class BrowseServer(object):
                 which = unhexlify(cid).decode('utf-8')
                 vls = self.db.prefs.get('virtual_libraries', {})
                 ids = self.search_cache(vls[which])
+                category_name = _('virtual library: ') + xml(which)
                 if not ids:
                     msg = _('The virtual library <b>%s</b> has no books.') % prepare_string_for_xml(which)
                     if self.search_restriction:
@@ -815,7 +814,9 @@ class BrowseServer(object):
                         (xml(href, True), rt, xml(_('Get')))
                 args['get_url'] = xml(href, True)
             else:
-                args['get_button'] = args['get_url'] = ''
+                args['get_button'] = ''
+                args['get_url'] = 'javascript:alert(\'%s\')' % xml(_(
+                    'This book has no available formats to view'), True)
             args['comments'] = comments_to_html(mi.comments)
             args['stars'] = ''
             if mi.rating:
@@ -849,7 +850,8 @@ class BrowseServer(object):
                 args['get_url'] = xml(self.opts.url_prefix + '/get/%s/%s_%d.%s'%(
                     fmt, fname, id_, fmt), True)
             else:
-                args['get_url'] = ''
+                args['get_url'] = 'javascript:alert(\'%s\')' % xml(_(
+                    'This book has no available formats to view'), True)
             args['formats'] = ''
             if fmts:
                 ofmts = [u'<a href="{4}/get/{0}/{1}_{2}.{0}" title="{3}">{3}</a>'

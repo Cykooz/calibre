@@ -30,6 +30,7 @@ machine = 'X64' if is64bit else 'X86'
 DESCRIPTIONS = {
         'calibre' : 'The main calibre program',
         'ebook-viewer' : 'Viewer for all e-book formats',
+        'ebook-edit' : 'Edit e-books',
         'lrfviewer'    : 'Viewer for LRF files',
         'ebook-convert': 'Command line interface to the conversion/news download system',
         'ebook-meta'   : 'Command line interface for manipulating e-book metadata',
@@ -334,7 +335,7 @@ class Win32Freeze(Command, WixMixIn):
     def embed_resources(self, module, desc=None, extra_data=None,
             product_description=None):
         icon_base = self.j(self.src_root, 'icons')
-        icon_map = {'calibre':'library', 'ebook-viewer':'viewer',
+        icon_map = {'calibre':'library', 'ebook-viewer':'viewer', 'ebook-edit':'ebook-edit',
                 'lrfviewer':'viewer', 'calibre-portable':'library'}
         file_type = 'DLL' if module.endswith('.dll') else 'APP'
         template = open(self.rc_template, 'rb').read()
@@ -652,7 +653,7 @@ class Win32Freeze(Command, WixMixIn):
                         # any extensions that use C++ exceptions must be loaded
                         # from files
                         'unrar.pyd', 'wpd.pyd', 'podofo.pyd',
-                        'progress_indicator.pyd',
+                        'progress_indicator.pyd', 'hunspell.pyd',
                         # As per this https://bugs.launchpad.net/bugs/1087816
                         # on some systems magick.pyd fails to load from memory
                         # on 64 bit
@@ -670,7 +671,10 @@ class Win32Freeze(Command, WixMixIn):
             sp = self.j(self.lib_dir, 'site-packages')
             # Special handling for PIL and pywin32
             handled = set(['PIL.pth', 'pywin32.pth', 'PIL', 'win32'])
-            if not is64bit:
+            if is64bit:
+                # PIL can raise exceptions, which cause crashes on 64bit
+                shutil.copytree(self.j(sp, 'PIL'), self.j(self.dll_dir, 'PIL'))
+            else:
                 self.add_to_zipfile(zf, 'PIL', sp)
             base = self.j(sp, 'win32', 'lib')
             for x in os.listdir(base):

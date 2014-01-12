@@ -1023,6 +1023,7 @@ class Device(DeviceConfig, DevicePlugin):
         Callback to allow individual device drivers to override the path sanitization
         used by :meth:`create_upload_path`.
         '''
+        settings = self.settings()
         sanitize = ascii_filename
         if self.SUPPORTS_NON_ENGLISH_CHARACTERS and not settings.asciiize:
             sanitize = sanitize_file_name

@@ -606,7 +606,7 @@ class Boss(QObject):
 
         def no_match():
             QApplication.restoreOverrideCursor()
-            msg = '<p>' + _('No matches were found for %s.') % prepare_string_for_xml(state['find'])
+            msg = '<p>' + _('No matches were found for %s') % ('<pre style="font-style:italic">' + prepare_string_for_xml(state['find']) + '</pre>')
             if not state['wrap']:
                 msg += '<p>' + _('You have turned off search wrapping, so all text might not have been searched.'
                   ' Try the search again, with wrapping enabled. Wrapping is enabled via the'
@@ -715,8 +715,12 @@ class Boss(QObject):
         ed = editors[name]
         with container.open(name, 'wb') as f:
             f.write(ed.data)
-            if container is current_container():
-                ed.is_synced_to_container = True
+        if name == container.opf_name:
+            container.refresh_mime_map()
+        if container is current_container():
+            ed.is_synced_to_container = True
+            if name == container.opf_name:
+                self.gui.file_list.build(container)
 
     def commit_all_editors_to_container(self):
         with BusyCursor():
@@ -1061,8 +1065,11 @@ class Boss(QObject):
         editor = editors.pop(name)
         self.gui.central.close_editor(editor)
         editor.break_cycles()
-        if not editors:
+        if not editors or getattr(self.gui.central.current_editor, 'syntax', None) != 'html':
             self.gui.preview.clear()
+
+    def insert_character(self):
+        self.gui.insert_char.show()
 
     # Shutdown {{{
     def quit(self):

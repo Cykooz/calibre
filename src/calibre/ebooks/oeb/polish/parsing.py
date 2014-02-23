@@ -275,7 +275,7 @@ def makeelement_ns(ctx, namespace, prefix, name, attrib, nsmap):
         for k, v in elem.items():  # Only elem.items() preserves attrib order
             nelem.set(k, v)
         for (prefix, name), v in namespaced_attribs.iteritems():
-            ns = nsmap.get('prefix', None)
+            ns = nsmap.get(prefix, None)
             if ns is not None:
                 try:
                     nelem.set('{%s}%s' % (ns, name), v)
@@ -331,6 +331,13 @@ class TreeBuilder(BaseTreeBuilder):
         self.openElements.append(element)
         self.document.appendChild(element)
 
+    def promote_elem(self, elem, tag_name):
+        ' Add the paraphernalia to elem that the html5lib infrastructure needs '
+        self.proxy_cache.append(elem)
+        elem.name = tag_name
+        elem.namespace = elem.nsmap[elem.prefix]
+        elem.nameTuple = (elem.nsmap[elem.prefix], elem.name)
+
     def createElement(self, token, nsmap=None):
         """Create an element but don't insert it anywhere"""
         nsmap = nsmap or {}
@@ -346,10 +353,7 @@ class TreeBuilder(BaseTreeBuilder):
 
         # Keep a reference to elem so that lxml does not delete and re-create
         # it, losing the name related attributes
-        self.proxy_cache.append(elem)
-        elem.name = token_name
-        elem.namespace = elem.nsmap[elem.prefix]
-        elem.nameTuple = (elem.nsmap[elem.prefix], elem.name)
+        self.promote_elem(elem, token_name)
         position = token.get('position', None)
         if position is not None:
             # Unfortunately, libxml2 can only store line numbers upto 65535
@@ -388,6 +392,18 @@ class TreeBuilder(BaseTreeBuilder):
         self.openElements.append(element)
         return element
 
+    def clone_node(self, elem, nsmap_update):
+        assert len(elem) == 0
+        nsmap = elem.nsmap.copy()
+        nsmap.update(nsmap_update)
+        nelem = self.lxml_context.makeelement(elem.tag, nsmap=nsmap)
+        self.promote_elem(nelem, elem.tag.rpartition('}')[2])
+        nelem.sourceline = elem.sourceline
+        for k, v in elem.items():
+            nelem.set(k, v)
+        nelem.text, nelem.tail = elem.text, elem.tail
+        return nelem
+
     def apply_html_attributes(self, attrs):
         if not attrs:
             return
@@ -403,7 +419,18 @@ class TreeBuilder(BaseTreeBuilder):
                         continue
                     if k == 'xml:lang' and 'lang' not in html.attrib:
                         k = 'lang'
-                    html.set(to_xml_name(k), v)
+                        html.set(k, v)
+                        continue
+                    if k.startswith('xmlns:') and v not in known_namespaces and v != namespaces['html'] and len(html) == 0:
+                        # We have a namespace declaration, the only way to add
+                        # it to the existing html node is to replace it.
+                        prefix = k[len('xmlns:'):]
+                        if not prefix:
+                            continue
+                        self.openElements[0] = html = self.clone_node(html, {prefix:v})
+                        self.document.appendChild(html)
+                    else:
+                        html.set(to_xml_name(k), v)
 
     def apply_body_attributes(self, attrs):
         if not attrs:
@@ -609,7 +636,7 @@ def strip_encoding_declarations(raw):
         raw = prefix + suffix
     return raw
 
-def parse(raw, decoder=None, log=None, line_numbers=True, linenumber_attribute=None, replace_entities=True):
+def parse(raw, decoder=None, log=None, line_numbers=True, linenumber_attribute=None, replace_entities=True, force_html5_parse=False):
     if isinstance(raw, bytes):
         raw = xml_to_unicode(raw)[0] if decoder is None else decoder(raw)
     if replace_entities:
@@ -626,6 +653,8 @@ def parse(raw, decoder=None, log=None, line_numbers=True, linenumber_attribute=N
         break
 
     raw = strip_encoding_declarations(raw)
+    if force_html5_parse:
+        return parse_html5(raw, log=log, line_numbers=line_numbers, linenumber_attribute=linenumber_attribute, replace_entities=False, fix_newlines=False)
     try:
         parser = XMLParser(no_network=True)
         ans = fromstring(raw, parser=parser)

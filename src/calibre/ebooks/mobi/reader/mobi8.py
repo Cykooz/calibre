@@ -386,6 +386,7 @@ class Mobi8Reader(object):
         return build_toc(index_entries)
 
     def extract_resources(self):
+        from calibre.ebooks.mobi.writer2.resources import PLACEHOLDER_GIF
         resource_map = []
         for x in ('fonts', 'images'):
             os.mkdir(x)
@@ -414,16 +415,17 @@ class Mobi8Reader(object):
                 if font['encrypted']:
                     self.encrypted_fonts.append(href)
             else:
-                imgtype = what(None, data)
-                if imgtype is None:
-                    from calibre.utils.magick.draw import identify_data
-                    try:
-                        imgtype = identify_data(data)[2]
-                    except Exception:
-                        imgtype = 'unknown'
-                href = 'images/%05d.%s'%(fname_idx, imgtype)
-                with open(href.replace('/', os.sep), 'wb') as f:
-                    f.write(data)
+                if not (len(data) == len(PLACEHOLDER_GIF) and data == PLACEHOLDER_GIF):
+                    imgtype = what(None, data)
+                    if imgtype is None:
+                        from calibre.utils.magick.draw import identify_data
+                        try:
+                            imgtype = identify_data(data)[2]
+                        except Exception:
+                            imgtype = 'unknown'
+                    href = 'images/%05d.%s'%(fname_idx, imgtype)
+                    with open(href.replace('/', os.sep), 'wb') as f:
+                        f.write(data)
 
             resource_map.append(href)
 

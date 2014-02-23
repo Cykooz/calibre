@@ -373,7 +373,20 @@ class Convert(object):
         current_hyperlink = None
         hl_xpath = XPath('ancestor::w:hyperlink[1]')
 
+        def p_parent(x):
+            # Ensure that nested <w:p> tags are handled. These can occur if a
+            # textbox is present inside a paragraph.
+            while True:
+                x = x.getparent()
+                try:
+                    if x.tag.endswith('}p'):
+                        return x
+                except AttributeError:
+                    break
+
         for x in descendants(p, 'w:r', 'w:bookmarkStart', 'w:hyperlink'):
+            if p_parent(x) is not p:
+                continue
             if x.tag.endswith('}r'):
                 span = self.convert_run(x)
                 if current_anchor is not None:

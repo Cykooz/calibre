@@ -18,7 +18,7 @@ from PyQt4.Qt import (
     QDialogButtonBox, QDialog, QLabel, QLineEdit, QVBoxLayout, QScrollArea,
     QRadioButton, QFormLayout, QSpinBox, QListWidget, QListWidgetItem, QCheckBox)
 
-from calibre import human_readable, sanitize_file_name_unicode
+from calibre import human_readable, sanitize_file_name_unicode, plugins
 from calibre.ebooks.oeb.base import OEB_STYLES, OEB_DOCS
 from calibre.ebooks.oeb.polish.container import guess_type, OEB_FONTS
 from calibre.ebooks.oeb.polish.replace import get_recommended_folders
@@ -154,6 +154,9 @@ class FileList(QTreeWidget):
 
     def __init__(self, parent=None):
         QTreeWidget.__init__(self, parent)
+        pi = plugins['progress_indicator'][0]
+        if hasattr(pi, 'set_no_activate_on_click'):
+            pi.set_no_activate_on_click(self)
         self.current_edited_name = None
         self.delegate = ItemDelegate(self)
         self.delegate.rename_requested.connect(self.rename_requested)
@@ -187,7 +190,7 @@ class FileList(QTreeWidget):
                 'misc':'mimetypes/dir.png',
                 'images':'view-image.png',
             }.iteritems()}
-        self.itemDoubleClicked.connect(self.item_double_clicked)
+        self.itemActivated.connect(self.item_double_clicked)
 
     def get_state(self):
         s = {'pos':self.verticalScrollBar().value()}
@@ -380,7 +383,7 @@ class FileList(QTreeWidget):
                 tooltips.append(_('This file is a text file that is not referenced in the spine'))
             if category == 'text' and name in processed:
                 # Duplicate entry in spine
-                emblems.append('dialog_warning.png')
+                emblems.append('dialog_error.png')
                 tooltips.append(_('This file occurs more than once in the spine'))
 
             render_emblems(item, emblems)
@@ -442,7 +445,7 @@ class FileList(QTreeWidget):
             m.addSeparator()
             if num > 1:
                 m.addAction(QIcon(I('modified.png')), _('&Bulk rename selected files'), self.request_bulk_rename)
-            m.addAction(QIcon(I('trash.png')), _('&Delete selected files'), self.request_delete)
+            m.addAction(QIcon(I('trash.png')), _('&Delete the %d selected file(s)') % num, self.request_delete)
             m.addSeparator()
 
         selected_map = defaultdict(list)
@@ -546,7 +549,15 @@ class FileList(QTreeWidget):
         # The sorting by index is necessary otherwise Qt crashes with recursive
         # repaint detected message
         for c in sorted(removals, key=lambda x:x.parent().indexOfChild(x), reverse=True):
-            c.parent().removeChild(c)
+            sip.delete(c)
+
+        # A bug in the raster paint engine on linux causes a crash if the scrollbar
+        # is at the bottom and the delete happens to cause the scrollbar to
+        # update
+        b = self.verticalScrollBar()
+        if b.value() == b.maximum():
+            b.setValue(b.minimum())
+            QTimer.singleShot(0, lambda : b.setValue(b.maximum()))
 
     def dropEvent(self, event):
         text = self.categories['text']
@@ -681,7 +692,9 @@ class NewFileDialog(QDialog):  # {{{
         self.l = l = QVBoxLayout()
         self.setLayout(l)
         self.la = la = QLabel(_(
-            'Choose a name for the new (blank) file'))
+            'Choose a name for the new (blank) file. To place the file in a'
+            ' specific folder in the book, include the folder name, for example: <i>text/chapter1.html'))
+        la.setWordWrap(True)
         self.setWindowTitle(_('Choose file'))
         l.addWidget(la)
         self.name = n = QLineEdit(self)

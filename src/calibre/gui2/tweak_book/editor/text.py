@@ -19,13 +19,18 @@ from PyQt4.Qt import (
 from calibre import prepare_string_for_xml, xml_entity_to_unicode
 from calibre.gui2.tweak_book import tprefs, TOP
 from calibre.gui2.tweak_book.editor import SYNTAX_PROPERTY
-from calibre.gui2.tweak_book.editor.themes import THEMES, default_theme, theme_color
+from calibre.gui2.tweak_book.editor.themes import THEMES, default_theme, theme_color, theme_format
 from calibre.gui2.tweak_book.editor.syntax.base import SyntaxHighlighter
 from calibre.gui2.tweak_book.editor.syntax.html import HTMLHighlighter, XMLHighlighter
 from calibre.gui2.tweak_book.editor.syntax.css import CSSHighlighter
+from calibre.gui2.tweak_book.editor.smart import NullSmarts
+from calibre.gui2.tweak_book.editor.smart.html import HTMLSmarts
 
 PARAGRAPH_SEPARATOR = '\u2029'
 entity_pat = re.compile(r'&(#{0,1}[a-zA-Z0-9]{1,8});')
+
+def get_highlighter(syntax):
+    return {'html':HTMLHighlighter, 'css':CSSHighlighter, 'xml':XMLHighlighter}.get(syntax, SyntaxHighlighter)
 
 _dff = None
 def default_font_family():
@@ -52,10 +57,74 @@ class LineNumbers(QWidget):  # {{{
         self.parent().paint_line_numbers(ev)
 # }}}
 
-class TextEdit(QPlainTextEdit):
+class PlainTextEdit(QPlainTextEdit):
+
+    ''' A class that overrides some methods from QPlainTextEdit to fix handling
+    of the nbsp unicode character. '''
 
     def __init__(self, parent=None):
         QPlainTextEdit.__init__(self, parent)
+        self.selectionChanged.connect(self.selection_changed)
+
+    def toPlainText(self):
+        # QPlainTextEdit's toPlainText implementation replaces nbsp with normal
+        # space, so we re-implement it using QTextCursor, which does not do
+        # that
+        c = self.textCursor()
+        c.clearSelection()
+        c.movePosition(c.Start)
+        c.movePosition(c.End, c.KeepAnchor)
+        ans = c.selectedText().replace(PARAGRAPH_SEPARATOR, '\n')
+        # QTextCursor pads the return value of selectedText with null bytes if
+        # non BMP characters such as 0x1f431 are present.
+        if hasattr(ans, 'rstrip'):
+            ans = ans.rstrip('\0')
+        else:  # QString
+            while ans[-1] == '\0':
+                ans.chop(1)
+        return ans
+
+    @pyqtSlot()
+    def copy(self):
+        # Workaround Qt replacing nbsp with normal spaces on copy
+        c = self.textCursor()
+        if not c.hasSelection():
+            return
+        md = QMimeData()
+        md.setText(self.selected_text)
+        QApplication.clipboard().setMimeData(md)
+
+    @pyqtSlot()
+    def cut(self):
+        # Workaround Qt replacing nbsp with normal spaces on copy
+        self.copy()
+        self.textCursor().removeSelectedText()
+
+    @property
+    def selected_text(self):
+        return unicodedata.normalize('NFC', unicode(self.textCursor().selectedText()).replace(PARAGRAPH_SEPARATOR, '\n').rstrip('\0'))
+
+    def selection_changed(self):
+        # Workaround Qt replacing nbsp with normal spaces on copy
+        clipboard = QApplication.clipboard()
+        if clipboard.supportsSelection() and self.textCursor().hasSelection():
+            md = QMimeData()
+            md.setText(self.selected_text)
+            clipboard.setMimeData(md, clipboard.Selection)
+
+    def event(self, ev):
+        if ev.type() == ev.ShortcutOverride and ev in (QKeySequence.Copy, QKeySequence.Cut):
+            ev.accept()
+            (self.copy if ev == QKeySequence.Copy else self.cut)()
+            return True
+        return QPlainTextEdit.event(self, ev)
+
+class TextEdit(PlainTextEdit):
+
+    def __init__(self, parent=None):
+        PlainTextEdit.__init__(self, parent)
+        self.saved_matches = {}
+        self.smarts = NullSmarts(self)
         self.current_cursor_line = None
         self.current_search_mark = None
         self.highlighter = SyntaxHighlighter(self)
@@ -64,7 +133,6 @@ class TextEdit(QPlainTextEdit):
         self.setMouseTracking(True)
         self.cursorPositionChanged.connect(self.highlight_cursor_line)
         self.blockCountChanged[int].connect(self.update_line_number_area_width)
-        self.selectionChanged.connect(self.selection_changed)
         self.updateRequest.connect(self.update_line_number_area)
         self.syntax = None
 
@@ -77,10 +145,6 @@ class TextEdit(QPlainTextEdit):
         def fset(self, val):
             self.document().setModified(bool(val))
         return property(fget=fget, fset=fset)
-
-    @property
-    def selected_text(self):
-        return unicodedata.normalize('NFC', unicode(self.textCursor().selectedText()).replace(PARAGRAPH_SEPARATOR, '\n'))
 
     def sizeHint(self):
         return self.size_hint
@@ -112,6 +176,7 @@ class TextEdit(QPlainTextEdit):
         pal.setColor(pal.Base, theme_color(theme, 'LineNr', 'bg'))
         pal.setColor(pal.Text, theme_color(theme, 'LineNr', 'fg'))
         pal.setColor(pal.BrightText, theme_color(theme, 'LineNrC', 'fg'))
+        self.match_paren_format = theme_format(theme, 'MatchParen')
         font = self.font()
         ff = tprefs['editor_font_family']
         if ff is None:
@@ -129,45 +194,14 @@ class TextEdit(QPlainTextEdit):
         self.highlight_cursor_line()
     # }}}
 
-    def toPlainText(self):
-        # QPlainTextEdit's toPlainText implementation replaces nbsp with normal
-        # space, so we re-implement it using QTextCursor, which does not do
-        # that
-        c = self.textCursor()
-        c.clearSelection()
-        c.movePosition(c.Start)
-        c.movePosition(c.End, c.KeepAnchor)
-        return c.selectedText().replace(PARAGRAPH_SEPARATOR, '\n')
-
-    @pyqtSlot()
-    def copy(self):
-        # Workaround Qt replacing nbsp with normal spaces on copy
-        c = self.textCursor()
-        if not c.hasSelection():
-            return
-        md = QMimeData()
-        md.setText(self.selected_text)
-        QApplication.clipboard().setMimeData(md)
-
-    @pyqtSlot()
-    def cut(self):
-        # Workaround Qt replacing nbsp with normal spaces on copy
-        self.copy()
-        self.textCursor().removeSelectedText()
-
-    def selection_changed(self):
-        # Workaround Qt replacing nbsp with normal spaces on copy
-        clipboard = QApplication.clipboard()
-        if clipboard.supportsSelection() and self.textCursor().hasSelection():
-            md = QMimeData()
-            md.setText(self.selected_text)
-            clipboard.setMimeData(md, clipboard.Selection)
-
     def load_text(self, text, syntax='html', process_template=False):
         self.syntax = syntax
-        self.highlighter = {'html':HTMLHighlighter, 'css':CSSHighlighter, 'xml':XMLHighlighter}.get(syntax, SyntaxHighlighter)(self)
+        self.highlighter = get_highlighter(syntax)(self)
         self.highlighter.apply_theme(self.theme)
         self.highlighter.setDocument(self.document())
+        sclass = {'html':HTMLSmarts, 'xml':HTMLSmarts}.get(syntax, None)
+        if sclass is not None:
+            self.smarts = sclass(self)
         self.setPlainText(unicodedata.normalize('NFC', text))
         if process_template and QPlainTextEdit.find(self, '%CURSOR%'):
             c = self.textCursor()
@@ -193,7 +227,7 @@ class TextEdit(QPlainTextEdit):
         c.movePosition(c.NextBlock, n=lnum - 1)
         c.movePosition(c.StartOfLine)
         c.movePosition(c.EndOfLine, c.KeepAnchor)
-        text = unicode(c.selectedText())
+        text = unicode(c.selectedText()).rstrip('\0')
         if col is None:
             c.movePosition(c.StartOfLine)
             lt = text.lstrip()
@@ -214,6 +248,7 @@ class TextEdit(QPlainTextEdit):
             sel.append(self.current_cursor_line)
         if self.current_search_mark is not None:
             sel.append(self.current_search_mark)
+        sel.extend(self.smarts.get_extra_selections(self))
         self.setExtraSelections(sel)
 
     # Search and replace {{{
@@ -230,7 +265,7 @@ class TextEdit(QPlainTextEdit):
             self.current_search_mark = None
         self.update_extra_selections()
 
-    def find_in_marked(self, pat, wrap=False):
+    def find_in_marked(self, pat, wrap=False, save_match=None):
         if self.current_search_mark is None:
             return False
         csm = self.current_search_mark.cursor
@@ -247,7 +282,7 @@ class TextEdit(QPlainTextEdit):
         if wrap:
             pos = m_end if reverse else m_start
         c.setPosition(pos, c.KeepAnchor)
-        raw = unicode(c.selectedText()).replace(PARAGRAPH_SEPARATOR, '\n')
+        raw = unicode(c.selectedText()).replace(PARAGRAPH_SEPARATOR, '\n').rstrip('\0')
         m = pat.search(raw)
         if m is None:
             return False
@@ -272,13 +307,15 @@ class TextEdit(QPlainTextEdit):
         self.setTextCursor(c)
         # Center search result on screen
         self.centerCursor()
+        if save_match is not None:
+            self.saved_matches[save_match] = m
         return True
 
     def all_in_marked(self, pat, template=None):
         if self.current_search_mark is None:
             return 0
         c = self.current_search_mark.cursor
-        raw = unicode(c.selectedText()).replace(PARAGRAPH_SEPARATOR, '\n')
+        raw = unicode(c.selectedText()).replace(PARAGRAPH_SEPARATOR, '\n').rstrip('\0')
         if template is None:
             count = len(pat.findall(raw))
         else:
@@ -290,9 +327,9 @@ class TextEdit(QPlainTextEdit):
                 self.update_extra_selections()
         return count
 
-    def find(self, pat, wrap=False, marked=False, complete=False):
+    def find(self, pat, wrap=False, marked=False, complete=False, save_match=None):
         if marked:
-            return self.find_in_marked(pat, wrap=wrap)
+            return self.find_in_marked(pat, wrap=wrap, save_match=save_match)
         reverse = pat.flags & regex.REVERSE
         c = self.textCursor()
         c.clearSelection()
@@ -303,7 +340,7 @@ class TextEdit(QPlainTextEdit):
         if wrap and not complete:
             pos = c.End if reverse else c.Start
         c.movePosition(pos, c.KeepAnchor)
-        raw = unicode(c.selectedText()).replace(PARAGRAPH_SEPARATOR, '\n')
+        raw = unicode(c.selectedText()).replace(PARAGRAPH_SEPARATOR, '\n').rstrip('\0')
         m = pat.search(raw)
         if m is None:
             return False
@@ -327,12 +364,23 @@ class TextEdit(QPlainTextEdit):
         self.setTextCursor(c)
         # Center search result on screen
         self.centerCursor()
+        if save_match is not None:
+            self.saved_matches[save_match] = m
         return True
 
-    def replace(self, pat, template):
+    def replace(self, pat, template, saved_match='gui'):
         c = self.textCursor()
-        raw = unicode(c.selectedText()).replace(PARAGRAPH_SEPARATOR, '\n')
+        raw = unicode(c.selectedText()).replace(PARAGRAPH_SEPARATOR, '\n').rstrip('\0')
         m = pat.fullmatch(raw)
+        if m is None:
+            # This can happen if either the user changed the selected text or
+            # the search expression uses lookahead/lookbehind operators. See if
+            # the saved match matches the currently selected text and
+            # use it, if so.
+            if saved_match is not None and saved_match in self.saved_matches:
+                saved = self.saved_matches.pop(saved_match)
+                if saved.group() == raw:
+                    m = saved
         if m is None:
             return False
         text = m.expand(template)
@@ -437,13 +485,19 @@ class TextEdit(QPlainTextEdit):
         if ev.type() == ev.ToolTip:
             self.show_tooltip(ev)
             return True
-        if ev.type() == ev.ShortcutOverride and ev in (
-            QKeySequence.Copy, QKeySequence.Cut, QKeySequence.Paste):
-            # Let the global cut/copy/paste shortcuts work,this avoids the nbsp
-            # problem as well, since they use the overridden copy() method
-            # instead of the one from Qt
-            ev.ignore()
-            return False
+        if ev.type() == ev.ShortcutOverride:
+            if ev in (
+                # Let the global cut/copy/paste shortcuts work,this avoids the nbsp
+                # problem as well, since they use the overridden copy() method
+                # instead of the one from Qt
+                QKeySequence.Copy, QKeySequence.Cut, QKeySequence.Paste,
+            ) or (
+                # This is used to convert typed hex codes into unicode
+                # characters
+                ev.key() == Qt.Key_X and ev.modifiers() == Qt.AltModifier
+            ):
+                ev.ignore()
+                return False
         return QPlainTextEdit.event(self, ev)
 
     # Tooltips {{{
@@ -516,7 +570,7 @@ class TextEdit(QPlainTextEdit):
         c = self.textCursor()
         c.setPosition(left)
         c.setPosition(right, c.KeepAnchor)
-        prev_text = unicode(c.selectedText())
+        prev_text = unicode(c.selectedText()).rstrip('\0')
         c.insertText(prefix + prev_text + suffix)
         if prev_text:
             right = c.position()
@@ -548,14 +602,42 @@ class TextEdit(QPlainTextEdit):
         self.setTextCursor(c)
 
     def keyPressEvent(self, ev):
+        if ev.key() == Qt.Key_X and ev.modifiers() == Qt.AltModifier:
+            if self.replace_possible_unicode_sequence():
+                ev.accept()
+                return
         QPlainTextEdit.keyPressEvent(self, ev)
         if (ev.key() == Qt.Key_Semicolon or ';' in unicode(ev.text())) and tprefs['replace_entities_as_typed'] and self.syntax == 'html':
             self.replace_possible_entity()
 
+    def replace_possible_unicode_sequence(self):
+        c = self.textCursor()
+        has_selection = c.hasSelection()
+        if has_selection:
+            text = unicode(c.selectedText()).rstrip('\0')
+        else:
+            c.setPosition(c.position() - min(c.positionInBlock(), 6), c.KeepAnchor)
+            text = unicode(c.selectedText()).rstrip('\0')
+        m = re.search(r'[a-fA-F0-9]{2,6}$', text)
+        if m is None:
+            return False
+        text = m.group()
+        try:
+            num = int(text, 16)
+        except ValueError:
+            return False
+        if num > 0x10ffff or num < 1:
+            return False
+        from calibre.gui2.tweak_book.char_select import chr
+        end_pos = max(c.anchor(), c.position())
+        c.setPosition(end_pos - len(text)), c.setPosition(end_pos, c.KeepAnchor)
+        c.insertText(chr(num))
+        return True
+
     def replace_possible_entity(self):
         c = self.textCursor()
         c.setPosition(c.position() - min(c.positionInBlock(), 10), c.KeepAnchor)
-        text = unicode(c.selectedText())
+        text = unicode(c.selectedText()).rstrip('\0')
         m = entity_pat.search(text)
         if m is None:
             return
@@ -571,4 +653,8 @@ class TextEdit(QPlainTextEdit):
         c.setPosition(0)
         c.movePosition(c.End, c.KeepAnchor)
         self.setTextCursor(c)
+
+    def rename_block_tag(self, new_name):
+        if hasattr(self.smarts, 'rename_block_tag'):
+            self.smarts.rename_block_tag(self, new_name)
 

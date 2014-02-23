@@ -9,15 +9,18 @@ __docformat__ = 'restructuredtext en'
 
 import re
 from urlparse import urlparse
-from collections import deque, Counter, OrderedDict
+from collections import Counter, OrderedDict
 from functools import partial
 from operator import itemgetter
 
 from lxml import etree
+from lxml.builder import ElementMaker
 
 from calibre import __version__
-from calibre.ebooks.oeb.base import XPath, uuid_id, xml2text, NCX, NCX_NS, XML, XHTML
-from calibre.ebooks.oeb.polish.container import guess_type
+from calibre.ebooks.oeb.base import XPath, uuid_id, xml2text, NCX, NCX_NS, XML, XHTML, XHTML_NS, serialize
+from calibre.ebooks.oeb.polish.errors import MalformedMarkup
+from calibre.ebooks.oeb.polish.utils import guess_type
+from calibre.ebooks.oeb.polish.pretty import pretty_html_tree
 from calibre.utils.localization import get_lang, canonicalize_lang, lang_as_iso639_1
 
 ns = etree.FunctionNamespace('calibre_xpath_extensions')
@@ -347,19 +350,33 @@ def from_files(container):
         toc.add(text, name)
     return toc
 
-def node_from_loc(root, loc):
-    body = root.xpath('//*[local-name()="body"]')[0]
-    locs = deque(loc)
-    node = body
-    while locs:
+def node_from_loc(root, locs, totals=None):
+    node = root.xpath('//*[local-name()="body"]')[0]
+    for i, loc in enumerate(locs):
         children = tuple(node.iterchildren(etree.Element))
-        node = children[locs[0]]
-        locs.popleft()
+        if totals is not None and totals[i] != len(children):
+            raise MalformedMarkup()
+        node = children[loc]
     return node
 
-def add_id(container, name, loc):
+def add_id(container, name, loc, totals=None):
     root = container.parsed(name)
-    node = node_from_loc(root, loc)
+    try:
+        node = node_from_loc(root, loc, totals=totals)
+    except MalformedMarkup:
+        # The webkit HTML parser and the container parser have yielded
+        # different node counts, this can happen if the file is valid XML
+        # but contains constructs like nested <p> tags. So force parse it
+        # with the HTML 5 parser and try again.
+        raw = container.raw_data(name)
+        root = container.parse_xhtml(raw, fname=name, force_html5_parse=True)
+        try:
+            node = node_from_loc(root, loc, totals=totals)
+        except MalformedMarkup:
+            raise MalformedMarkup(_('The file %s has malformed markup. Try running the Fix HTML tool'
+                                    ' before editing.') % name)
+        container.replace(name, root)
+
     node.set('id', node.get('id', uuid_id()))
     container.commit_item(name, keep_parsed=True)
     return node.get('id')
@@ -457,3 +474,71 @@ def remove_names_from_toc(container, names):
         commit_toc(container, toc)
         return True
     return False
+
+def find_inline_toc(container):
+    for name, linear in container.spine_names:
+        if container.parsed(name).xpath('//*[local-name()="body" and @id="calibre_generated_inline_toc"]'):
+            return name
+
+def create_inline_toc(container, title=None):
+    title = title or _('Table of Contents')
+    toc = get_toc(container)
+    if len(toc) == 0:
+        return None
+    toc_name = find_inline_toc(container)
+
+    def process_node(html_parent, toc, level=1, indent='  '):
+        li = html_parent.makeelement(XHTML('li'))
+        li.tail = '\n'+ (indent*level)
+        html_parent.append(li)
+        name, frag = toc.dest, toc.frag
+        href = '#'
+        if name:
+            href = container.name_to_href(name, toc_name)
+            if frag:
+                href += '#' + frag
+        a = li.makeelement(XHTML('a'), href=href)
+        a.text = toc.title
+        li.append(a)
+        if len(toc) > 0:
+            parent = li.makeelement(XHTML('ul'))
+            li.append(parent)
+            a.tail = '\n\n' + (indent*(level+2))
+            parent.text = '\n'+(indent*(level+3))
+            parent.tail = '\n\n' + (indent*(level+1))
+            for child in toc:
+                process_node(parent, child, level+3)
+            parent[-1].tail = '\n' + (indent*(level+2))
+
+    E = ElementMaker(namespace=XHTML_NS, nsmap={None:XHTML_NS})
+    html = E.html(
+        E.head(
+            E.title(title),
+            E.style('''
+                li { list-style-type: none; padding-left: 2em; margin-left: 0}
+                a { text-decoration: none }
+                a:hover { color: red }''', type='text/css'),
+        ),
+        E.body(
+            E.h2(title),
+            E.ul(),
+            id="calibre_generated_inline_toc",
+        )
+    )
+
+    name = toc_name
+    for child in toc:
+        process_node(html[1][1], child)
+    pretty_html_tree(container, html)
+    raw = serialize(html, 'text/html')
+    if name is None:
+        name, c = 'toc.xhtml', 0
+        while container.has_name(name):
+            c += 1
+            name = 'toc%d.xhtml' % c
+        container.add_file(name, raw, spine_index=0)
+    else:
+        with container.open(name, 'wb') as f:
+            f.write(raw)
+    return name
+

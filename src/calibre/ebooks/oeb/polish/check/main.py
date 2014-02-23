@@ -9,15 +9,17 @@ __copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
 from future_builtins import map
 
 from calibre.ebooks.oeb.base import OEB_DOCS, OEB_STYLES
-from calibre.ebooks.oeb.polish.container import guess_type
+from calibre.ebooks.oeb.polish.utils import guess_type
 from calibre.ebooks.oeb.polish.cover import is_raster_image
 from calibre.ebooks.oeb.polish.check.base import run_checkers
-from calibre.ebooks.oeb.polish.check.parsing import check_xml_parsing, check_css_parsing, fix_style_tag, check_html_size
+from calibre.ebooks.oeb.polish.check.parsing import (
+    check_filenames, check_xml_parsing, check_css_parsing, fix_style_tag, check_html_size, check_ids)
 from calibre.ebooks.oeb.polish.check.images import check_raster_images
-from calibre.ebooks.oeb.polish.check.links import check_links, check_mimetypes
+from calibre.ebooks.oeb.polish.check.links import check_links, check_mimetypes, check_link_destinations
 from calibre.ebooks.oeb.polish.check.fonts import check_fonts
+from calibre.ebooks.oeb.polish.check.opf import check_opf
 
-XML_TYPES = frozenset(map(guess_type, ('a.xml', 'a.svg', 'a.opf', 'a.ncx')))
+XML_TYPES = frozenset(map(guess_type, ('a.xml', 'a.svg', 'a.opf', 'a.ncx'))) | {'application/oebps-page-map+xml'}
 
 def run_checks(container):
 
@@ -56,8 +58,11 @@ def run_checks(container):
                 errors.extend(check_css_parsing(name, raw, line_offset=elem.sourceline - 1, is_declaration=True))
 
     errors += check_mimetypes(container)
-    errors += check_links(container)
+    errors += check_links(container) + check_link_destinations(container)
     errors += check_fonts(container)
+    errors += check_filenames(container)
+    errors += check_ids(container)
+    errors += check_opf(container)
 
     return errors
 

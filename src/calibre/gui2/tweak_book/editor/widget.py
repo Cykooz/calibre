@@ -8,13 +8,30 @@ __copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
 
 import unicodedata
 
-from PyQt4.Qt import QMainWindow, Qt, QApplication, pyqtSignal, QMenu
+from PyQt4.Qt import (
+    QMainWindow, Qt, QApplication, pyqtSignal, QMenu, qDrawShadeRect, QPainter,
+    QImage, QColor, QIcon, QPixmap, QToolButton)
 
 from calibre.gui2 import error_dialog
 from calibre.gui2.tweak_book import actions, current_container
 from calibre.gui2.tweak_book.editor.text import TextEdit
 
-def register_text_editor_actions(reg):
+def create_icon(text, palette=None, sz=32, divider=2):
+    if palette is None:
+        palette = QApplication.palette()
+    img = QImage(sz, sz, QImage.Format_ARGB32)
+    img.fill(Qt.transparent)
+    p = QPainter(img)
+    p.setRenderHints(p.TextAntialiasing | p.Antialiasing)
+    qDrawShadeRect(p, img.rect(), palette, fill=QColor('#ffffff'), lineWidth=1, midLineWidth=1)
+    f = p.font()
+    f.setFamily('Liberation Sans'), f.setPixelSize(sz // divider), f.setBold(True)
+    p.setFont(f), p.setPen(Qt.black)
+    p.drawText(img.rect().adjusted(2, 2, -2, -2), Qt.AlignCenter, text)
+    p.end()
+    return QIcon(QPixmap.fromImage(img))
+
+def register_text_editor_actions(reg, palette):
     ac = reg('format-text-bold', _('&Bold'), ('format_text', 'bold'), 'format-text-bold', 'Ctrl+B', _('Make the selected text bold'))
     ac.setToolTip(_('<h3>Bold</h3>Make the selected text bold'))
     ac = reg('format-text-italic', _('&Italic'), ('format_text', 'italic'), 'format-text-italic', 'Ctrl+I', _('Make the selected text italic'))
@@ -38,6 +55,12 @@ def register_text_editor_actions(reg):
 
     ac = reg('view-image', _('&Insert image'), ('insert_resource', 'image'), 'insert-image', (), _('Insert an image into the text'))
     ac.setToolTip(_('<h3>Insert image</h3>Insert an image into the text'))
+
+    for i, name in enumerate(('h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p')):
+        text = ('&' + name) if name == 'p' else (name[0] + '&' + name[1])
+        desc = _('Convert the paragraph to &lt;%s&gt;') % name
+        ac = reg(create_icon(name), text, ('rename_block_tag', name), 'rename-block-tag-' + name, 'Ctrl+%d' % (i + 1), desc)
+        ac.setToolTip(desc)
 
 class Editor(QMainWindow):
 
@@ -95,7 +118,7 @@ class Editor(QMainWindow):
         self.editor.load_text(template, syntax=self.syntax, process_template=True)
 
     def get_raw_data(self):
-        return unicodedata.normalize('NFC', unicode(self.editor.toPlainText()))
+        return unicodedata.normalize('NFC', unicode(self.editor.toPlainText()).rstrip('\0'))
 
     def replace_data(self, raw, only_if_different=True):
         if isinstance(raw, bytes):
@@ -176,6 +199,12 @@ class Editor(QMainWindow):
             self.format_bar = b = self.addToolBar(_('Format text'))
             for x in ('bold', 'italic', 'underline', 'strikethrough', 'subscript', 'superscript', 'color', 'background-color'):
                 b.addAction(actions['format-text-%s' % x])
+            ac = b.addAction(QIcon(I('format-text-heading.png')), _('Change paragraph to heading'))
+            m = QMenu()
+            ac.setMenu(m)
+            b.widgetForAction(ac).setPopupMode(QToolButton.InstantPopup)
+            for name in tuple('h%d' % d for d in range(1, 7)) + ('p',):
+                m.addAction(actions['rename-block-tag-%s' % name])
 
     def break_cycles(self):
         self.modification_state_changed.disconnect()
@@ -190,6 +219,7 @@ class Editor(QMainWindow):
         self.editor.copyAvailable.disconnect()
         self.editor.cursorPositionChanged.disconnect()
         self.editor.setPlainText('')
+        self.editor.smarts = None
 
     def _modification_state_changed(self):
         self.is_synced_to_container = self.is_modified
@@ -221,7 +251,7 @@ class Editor(QMainWindow):
         if not c.atStart():
             c.clearSelection()
             c.setPosition(c.position()-1, c.KeepAnchor)
-            char = unicode(c.selectedText())
+            char = unicode(c.selectedText()).rstrip('\0')
         return (c.blockNumber() + 1, c.positionInBlock(), char)
 
     def cut(self):
@@ -268,6 +298,8 @@ class Editor(QMainWindow):
         m.addSeparator()
         m.addAction(_('&Select all'), self.editor.select_all)
         m.addAction(actions['mark-selected-text'])
+        if self.syntax == 'html':
+            m.addAction(actions['multisplit'])
         m.exec_(self.editor.mapToGlobal(pos))
 
 

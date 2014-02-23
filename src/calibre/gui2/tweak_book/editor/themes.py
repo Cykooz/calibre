@@ -35,7 +35,7 @@ SOLARIZED = \
     CursorColumn bg={base02}
     ColorColumn  bg={base02}
     HighlightRegion bg={base00}
-    MatchParen   fg={red} bg={base01} bold
+    MatchParen   bg={base02} fg={magenta}
     Pmenu        fg={base0} bg={base02}
     PmenuSel     fg={base01} bg={base2}
 
@@ -61,6 +61,11 @@ SOLARIZED = \
 
     Error        us=wave uc={red}
     Tooltip      fg=black bg=ffffed
+
+    DiffDelete   bg={base02} fg={red}
+    DiffInsert   bg={base02} fg={green}
+    DiffReplace  bg={base02} fg={blue}
+    DiffReplaceReplace bg={base03}
     '''
 # }}}
 
@@ -70,8 +75,8 @@ THEMES = {
     CursorLine   bg={cursor_loc}
     CursorColumn bg={cursor_loc}
     ColorColumn  bg={cursor_loc}
-    HighlightRegion bg=323232
-    MatchParen   fg=f6f3e8 bg=857b6f bold
+    HighlightRegion bg=3d3d3d
+    MatchParen   bg=444444
     Pmenu        fg=f6f3e8 bg=444444
     PmenuSel     fg=yellow bg={identifier}
     Tooltip      fg=black bg=ffffed
@@ -97,8 +102,13 @@ THEMES = {
     Error        us=wave uc=red
     SpecialCharacter bg={cursor_loc}
 
+    DiffDelete   bg=341414 fg=642424
+    DiffInsert   bg=143414 fg=246424
+    DiffReplace  bg=141434 fg=242464
+    DiffReplaceReplace bg=002050
+
     '''.format(
-        cursor_loc='3d3d3d',
+        cursor_loc='323232',
         identifier='cae682',
         comment='99968b',
         string='95e454',
@@ -111,7 +121,7 @@ THEMES = {
     CursorColumn bg={cursor_loc}
     ColorColumn  bg={cursor_loc}
     HighlightRegion bg=E3F988
-    MatchParen   fg=white bg=80a090 bold
+    MatchParen   bg=cfcfcf
     Pmenu        fg=white bg=808080
     PmenuSel     fg=white bg=808080
     Tooltip      fg=black bg=ffffed
@@ -136,6 +146,11 @@ THEMES = {
     Special      fg=70a0d0 italic
     SpecialCharacter bg={cursor_loc}
     Error        us=wave uc=red
+
+    DiffDelete   bg=rgb(255,180,200) fg=rgb(200,80,110)
+    DiffInsert   bg=rgb(180,255,180) fg=rgb(80,210,80)
+    DiffReplace  bg=rgb(206,226,250) fg=rgb(90,130,180)
+    DiffReplaceReplace bg=rgb(180,210,250)
 
     '''.format(
         cursor_loc='F8DE7E',
@@ -228,5 +243,11 @@ def theme_color(theme, name, attr):
     try:
         return getattr(theme[name], attr).color()
     except (KeyError, AttributeError):
-        return getattr(THEMES[default_theme()], attr).color()
+        return getattr(THEMES[default_theme()][name], attr).color()
 
+def theme_format(theme, name):
+    try:
+        h = theme[name]
+    except KeyError:
+        h = THEMES[default_theme()][name]
+    return highlight_to_char_format(h)

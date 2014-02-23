@@ -17,6 +17,7 @@ You can use this editor by right clicking on any book in |app| and selecting
 .. image:: images/edit-book.png
     :alt: The Edit Book tool
     :align: center
+    :class: fit-img
 
 .. contents:: Contents
   :depth: 2
@@ -74,7 +75,7 @@ the bottom of the screen, the full path to the file inside the book. Note that
 files inside ebooks are compressed, so the size of the final book is not the
 sum of the individual file sizes.
 
-Many files have special special meaning, in the book. These will typically have
+Many files have special meaning, in the book. These will typically have
 an icon next to their names, indicating the special meaning. For example, in
 the picture to the left, you can see that the files :guilabel:`cover_image.jpg`
 and :guilabel:`titlepage.xhtml` have the ocon of a cover next to them, this
@@ -128,7 +129,7 @@ Marking the cover
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 E-books typically have a cover image. This image is indicated in the Files
-Browser by the icon of a brow book next to the image name. If you want to
+Browser by the icon of a brown book next to the image name. If you want to
 designate some other image as the cover, you can do so by right clicking on the
 file and choosing :guilabel:`Mark as cover`.
 
@@ -235,7 +236,7 @@ Edit the Table of Contents
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 There is a dedicated tool to ease editing of the Table of Contents. Launch it
-with :guilabel:`Tools->Edit Table of Contents`. 
+with :guilabel:`Tools->Table of Contents->Edit Table of Contents`. 
 
 .. image:: images/tocedit.png
     :alt: The Edit Table of Contents tool
@@ -245,7 +246,7 @@ The Edit Table of Contents tool shows you the current Table of Contents (if
 any) on the left. Simply double click on any entry to change its text. You can
 also re-arrange entries by drag and drop or by using the buttons to the right.
 
-Fro books that do not have a pre-existing Table of Contents, the tool gives you
+For books that do not have a pre-existing Table of Contents, the tool gives you
 various options to auto-generate a Table of Contents from the text. You can
 generate from the headings in the document, from links, from individual files
 and so on. 
@@ -300,6 +301,10 @@ Some of the checks performed are:
     * Unreferenced files. Files in the book that are not referenced by any
       other file or are not in the spine are reported.
 
+    * Various common problems in OPF files such as duplicate spine or manifest
+      items, broken idrefs or meta cover tags, missing required sections and
+      so on.
+
     * Various compatibility checks for known problems that can cause the book
       to malfunction on reader devices.
 
@@ -331,6 +336,15 @@ Note that the algorithm can sometimes generate incorrect results, especially
 when single quotes at the start of contractions are involved. Accessed via
 :guilabel:`Tools->Smarten punctuation`.
 
+Removing unused CSS rules
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Remove all unused CSS rules from stylesheets and <style> tags. Some books
+created from production templates can have a large number of extra CSS rules
+that dont match any actual content. These extra rules can slow down readers
+that need to process them all. Accessed via :guilabel:`Tools->Remove unused CSS`.
+
+
 Fix HTML
 ^^^^^^^^^^^
 
@@ -353,6 +367,22 @@ broken HTML/CSS. Therefore, if you dont want any auto-fixing to be performed,
 first use the Check Book tool to correct all problems and only then run
 beautify.  Accessed via :guilabel:`Tools->Beautify all files`.
 
+
+Insert inline Table of Contents
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Normally in ebooks, the Table of Contents is separate from the main text and is
+typically accessed via a special Table of Contents button/menu in the ebook
+reading device. You can also have |app| automatically generate an *inline*
+Table of Contents that becomes part of the text of the book. It is
+generated based on the currently defined Table of Contents. 
+
+If you use this tool multiple times, each invocation will cause the previously
+created inline Table of Contents to be replaced. The tool can be accessed via
+:guilabel:`Tools->Table of Contents->Insert inline Table of Contents`.
+
+.. _checkpoints:
+
 Checkpoints
 ------------------------
 
@@ -362,13 +392,20 @@ the results, return to the checkpointed state. Checkpoints are automatically
 created every time you run any of the automated tools described in the
 previous section.
 
-You can create a checkpoint via:guilabel:`Edit->Create checkpoint`. And go back
-to a previous checkpoint with :guilabel:`Edit->Revert to before`
+You can create a checkpoint via :guilabel:`Edit->Create checkpoint`. And go back
+to a previous checkpoint with :guilabel:`Edit->Revert to ...`
 
 The checkpointing functionality is in addition to the normal Undo/redo
 mechanism when editing individual files. Checkpoints are particularly useful
 for when changes are spread over multiple files in the book or when you wish to
 be able to revert a large group of related changes as a whole.
+
+You can see a list of available checkpoints via :guilabel:`View->Checkpoints`.
+You can compare the current state of the book to a specified checkpoint
+using the :ref:`diff` tool -- by selecting the checkpoint of interest and clicking
+the :guilabel:`Compare` button. The :guilabel:`Revert to` button restores the
+book to the selected checkpoint, undoing all changes since that checkpoint was
+created.
 
 The Live Preview panel
 ------------------------
@@ -420,9 +457,12 @@ the location you want, simply click and the split will be performed.
 
 Splitting the file will automatically update all links and references that
 pointed into the bottom half of the file and will open the newly split file in
-an editor. If you want to repeatedly split a file, you can do that, and then
-use the bulk renaming facility of the Files Browser, described above, to give
-the split off files sensible names.
+an editor. 
+
+You can also split a single HTML file at multiple locations automatically, by
+right clicking inside the file in the editor and choosing :guilabel:`Split at
+multiple locations`. This will allow you to easily split a large file at all
+heading tags or all tags having a certain class and so on.
 
 
 Miscellaneous Tools
@@ -455,6 +495,14 @@ it from favorites. Finally, you can re-arrange the order of characters in
 favorites by clicking the :guilabel:`Re-arrange favorties` button and then drag
 and dropping the characters in favorites around.
 
+You can also directly type in special characters using the keyboard. To do
+this, you type the unicode code for the character (in hexadecimal) and then
+press the :guilabel:`Alt+X` key which will convert the previously typed code
+into the corresponding character. For example, to type ÿ you would type ff and
+then Alt+X. To type a non-breaking space you would use a0 and then
+:guilabel:`Alt+X`, to type the horizontal ellipsis you would use 2026 and
+:guilabel:`Alt+X` and so on.
+
 The code inspector view
 ^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -467,3 +515,12 @@ Note that editing the styles does not actually make changes to the book
 contents, it only allows for quick experimentation. The ability to live edit
 inside the Inspector is under development.
 
+Arrange files into folders by type
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Often when editing EPUB files that you get from somewhere, you will find that
+the files inside the EPUB are arranged haphazardly, in different sub-folders.
+This tool allows you to automatically move all files into sub-folders based on
+their types. Access it via :guilabel:`Tools->Arrange into folders`. Note that
+this tool only changes how the files are arranged inside the EPUB, it does not
+change how they are displayed in the Files Browser.

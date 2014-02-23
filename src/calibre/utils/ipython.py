@@ -7,7 +7,7 @@ __license__   = 'GPL v3'
 __copyright__ = '2012, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
-import os
+import os, re, sys
 from calibre.constants import iswindows, cache_dir, get_version
 
 ipydir = os.path.join(cache_dir(), 'ipython')
@@ -164,8 +164,13 @@ def ipython(user_ns=None):
         from IPython.config.loader import Config
     except ImportError:
         return simple_repl(user_ns=user_ns)
+    defns = {'os':os, 're':re, 'sys':sys}
     if not user_ns:
-        user_ns = {}
+        user_ns = defns
+    else:
+        defns.update(user_ns)
+        user_ns = defns
+
     c = Config()
     c.InteractiveShellApp.exec_lines = [
         'from __future__ import division, absolute_import, unicode_literals, print_function',

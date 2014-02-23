@@ -19,6 +19,7 @@ from calibre.ebooks.oeb.polish.cover import set_cover
 from calibre.ebooks.oeb.polish.replace import smarten_punctuation
 from calibre.ebooks.oeb.polish.jacket import (
     replace_jacket, add_or_replace_jacket, find_existing_jacket, remove_jacket)
+from calibre.ebooks.oeb.polish.css import remove_unused_css
 from calibre.utils.logging import Log
 
 ALL_OPTS = {
@@ -29,6 +30,7 @@ ALL_OPTS = {
     'jacket': False,
     'remove_jacket':False,
     'smarten_punctuation':False,
+    'remove_unused_css':False,
 }
 
 SUPPORTED = {'EPUB', 'AZW3'}
@@ -90,6 +92,13 @@ typographically correct equivalents.</p>
 <p>Note that the algorithm can sometimes generate incorrect results, especially
 when single quotes at the start of contractions are involved.</p>
 '''),
+
+'remove_unused_css': _('''\
+<p>Remove all unused CSS rules from stylesheets and &lt;style&gt; tags. Some books
+created from production templates can have a large number of extra CSS rules
+that dont match any actual content. These extra rules can slow down readers
+that need to parse them all.</p>
+'''),
 }
 
 def hfix(name, raw):
@@ -98,6 +107,7 @@ def hfix(name, raw):
     raw = raw.replace('\n\n', '__XX__')
     raw = raw.replace('\n', ' ')
     raw = raw.replace('__XX__', '\n')
+    raw = raw.replace('&lt;', '<').replace('&gt;', '>')
     return raw
 
 CLI_HELP = {x:hfix(x, re.sub('<.*?>', '', y)) for x, y in HELP.iteritems()}
@@ -122,11 +132,13 @@ def update_metadata(ebook, new_opf):
 def polish_one(ebook, opts, report):
     rt = lambda x: report('\n### ' + x)
     jacket = None
+    changed = False
 
     if opts.subset or opts.embed:
         stats = StatsCollector(ebook, do_embed=opts.embed)
 
     if opts.opf:
+        changed = True
         rt(_('Updating metadata'))
         update_metadata(ebook, opts.opf)
         jacket = find_existing_jacket(ebook)
@@ -136,11 +148,13 @@ def polish_one(ebook, opts, report):
         report(_('Metadata updated\n'))
 
     if opts.cover:
+        changed = True
         rt(_('Setting cover'))
         set_cover(ebook, opts.cover, report)
         report('')
 
     if opts.jacket:
+        changed = True
         rt(_('Inserting metadata jacket'))
         if jacket is None:
             if add_or_replace_jacket(ebook):
@@ -155,24 +169,36 @@ def polish_one(ebook, opts, report):
         rt(_('Removing metadata jacket'))
         if remove_jacket(ebook):
             report(_('Metadata jacket removed'))
+            changed = True
         else:
             report(_('No metadata jacket found'))
         report('')
 
     if opts.smarten_punctuation:
         rt(_('Smartening punctuation'))
-        smarten_punctuation(ebook, report)
+        if smarten_punctuation(ebook, report):
+            changed = True
         report('')
 
     if opts.embed:
         rt(_('Embedding referenced fonts'))
-        embed_all_fonts(ebook, stats, report)
+        if embed_all_fonts(ebook, stats, report):
+            changed = True
         report('')
 
     if opts.subset:
         rt(_('Subsetting embedded fonts'))
-        subset_all_fonts(ebook, stats.font_stats, report)
+        if subset_all_fonts(ebook, stats.font_stats, report):
+            changed = True
         report('')
+
+    if opts.remove_unused_css:
+        rt(_('Removing unused CSS rules'))
+        if remove_unused_css(ebook, report):
+            changed = True
+        report('')
+
+    return changed
 
 
 def polish(file_map, opts, log, report):
@@ -213,8 +239,8 @@ def tweak_polish(container, actions):
     O = namedtuple('Options', ' '.join(ALL_OPTS.iterkeys()))
     opts = O(**opts)
     report = []
-    polish_one(container, opts, report.append)
-    return report
+    changed = polish_one(container, opts, report.append)
+    return report, changed
 
 def option_parser():
     from calibre.utils.config import OptionParser
@@ -233,6 +259,7 @@ def option_parser():
     o('--jacket', '-j', help=CLI_HELP['jacket'])
     o('--remove-jacket', help=CLI_HELP['remove_jacket'])
     o('--smarten-punctuation', '-p', help=CLI_HELP['smarten_punctuation'])
+    o('--remove-unused-css', '-u', help=CLI_HELP['remove_unused_css'])
 
     o('--verbose', help=_('Produce more verbose output, useful for debugging.'))
 

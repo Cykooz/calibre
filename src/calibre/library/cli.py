@@ -131,11 +131,11 @@ def do_list(db, fields, afields, sort_by, ascending, search_text, line_width, se
     with ColoredStream(sys.stdout, fg='green'):
         print ''.join(titles)
 
-    wrappers = map(lambda x: TextWrapper(x-1), widths)
+    wrappers = [TextWrapper(x - 1).wrap if x > 1 else lambda y: y for x in widths]
     o = cStringIO.StringIO()
 
     for record in data:
-        text = [wrappers[i].wrap(unicode(record[field])) for i, field in enumerate(fields)]
+        text = [wrappers[i](unicode(record[field])) for i, field in enumerate(fields)]
         lines = max(map(len, text))
         for l in range(lines):
             for i, field in enumerate(text):
@@ -546,7 +546,7 @@ def do_set_metadata(db, id, stream):
     db.set_metadata(id, mi)
 
 def set_metadata_option_parser():
-    return get_parser(_(
+    parser = get_parser(_(
 '''
 %prog set_metadata [options] id [/path/to/metadata.opf]
 
@@ -557,9 +557,6 @@ show_metadata command. You can also set the metadata of individual fields with
 the --field option. If you use the --field option, there is no need to specify
 an OPF file.
 '''))
-
-def command_set_metadata(args, dbpath):
-    parser = set_metadata_option_parser()
     parser.add_option('-f', '--field', action='append', default=[], help=_(
         'The field to set. Format is field_name:value, for example: '
         '{0} tags:tag1,tag2. Use {1} to get a list of all field names. You '
@@ -573,6 +570,10 @@ def command_set_metadata(args, dbpath):
     parser.add_option('-l', '--list-fields', action='store_true',
         default=False, help=_('List the metadata field names that can be used'
         ' with the --field option'))
+    return parser
+
+def command_set_metadata(args, dbpath):
+    parser = set_metadata_option_parser()
     opts, args = parser.parse_args(sys.argv[0:1]+args)
     db = get_db(dbpath, opts)
 
@@ -642,9 +643,21 @@ def command_set_metadata(args, dbpath):
             val = field_from_string(field, val, fields[field])
             vals[field] = val
         mi = db.get_metadata(book_id, index_is_id=True, get_cover=False)
-        for field, val in sorted(vals.iteritems(), key=lambda k: 1 if
-                k[0].endswith('_index') else 0):
-            mi.set(field, val)
+        for field, val in sorted(  # ensure series_index fields are set last
+                vals.iteritems(), key=lambda k: 1 if k[0].endswith('_index') else 0):
+            if field.endswith('_index'):
+                try:
+                    val = float(val)
+                except Exception:
+                    print >>sys.stderr, 'The value %r is not a valid series index' % val
+                    raise SystemExit(1)
+                sname = mi.get(field[:-6])
+                if not sname:
+                    print >>sys.stderr, 'Cannot set index for series before setting the series name'
+                    raise SystemExit(1)
+                mi.set(field[:-6], sname, extra=val)
+            else:
+                mi.set(field, val)
         db.set_metadata(book_id, mi, force_changes=True)
     db.clean()
     do_show_metadata(db, book_id, False)
@@ -718,7 +731,7 @@ def command_export(args, dbpath):
 
 def do_add_custom_column(db, label, name, datatype, is_multiple, display):
     num = db.create_custom_column(label, name, datatype, is_multiple, display=display)
-    prints('Custom column created with id: %d'%num)
+    prints('Custom column created with id: %s'%num)
 
 def add_custom_column_option_parser():
     from calibre.library.custom_columns import CustomColumns
@@ -797,16 +810,12 @@ def catalog_option_parser(args):
 
         return plugin
 
-    def print_help(parser, log):
-        help = parser.format_help().encode(preferred_encoding, 'replace')
-        log(help)
-
     def validate_command_line(parser, args, log):
         # calibredb catalog path/to/destination.[epub|csv|xml|...] [options]
 
         # Validate form
         if not len(args) or args[0].startswith('-'):
-            print_help(parser, log)
+            parser.print_help()
             log.error("\n\nYou must specify a catalog output file of the form 'path/to/destination.extension'\n"
             "To review options for an output format, type 'calibredb catalog <.extension> --help'\n"
             "For example, 'calibredb catalog .xml --help'\n")
@@ -817,7 +826,7 @@ def catalog_option_parser(args):
         file_extension = output[output.rfind('.') + 1:].lower()
 
         if not file_extension in available_catalog_formats():
-            print_help(parser, log)
+            parser.print_help()
             log.error("No catalog plugin available for extension '%s'.\n" % file_extension +
                       "Catalog plugins available for %s\n" % ', '.join(available_catalog_formats()))
             raise SystemExit(1)

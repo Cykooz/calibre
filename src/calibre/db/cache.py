@@ -671,8 +671,9 @@ class Cache(object):
         '''
         Return absolute path to the ebook file of format `format`
 
-        Currently used only in calibredb list, the viewer, edit book and the
-        catalogs (via get_data_as_dict()).
+        Currently used only in calibredb list, the viewer, edit book,
+        compare_format to original format and the catalogs (via
+        get_data_as_dict()).
 
         Apart from the viewer, I don't believe any of the others do any file
         I/O with the results of this call.
@@ -975,7 +976,10 @@ class Cache(object):
     def update_path(self, book_ids, mark_as_dirtied=True):
         for book_id in book_ids:
             title = self._field_for('title', book_id, default_value=_('Unknown'))
-            author = self._field_for('authors', book_id, default_value=(_('Unknown'),))[0]
+            try:
+                author = self._field_for('authors', book_id, default_value=(_('Unknown'),))[0]
+            except IndexError:
+                author = _('Unknown')
             self.backend.update_path(book_id, title, author, self.fields['path'], self.fields['formats'])
             if mark_as_dirtied:
                 self._mark_as_dirty(book_ids)
@@ -1250,7 +1254,14 @@ class Cache(object):
             if name and not replace:
                 return False
 
-            path = self._field_for('path', book_id).replace('/', os.sep)
+            path = self._field_for('path', book_id)
+            if path is None:
+                # Theoretically, this should never happen, but apparently it
+                # does: http://www.mobileread.com/forums/showthread.php?t=233353
+                self._update_path({book_id}, mark_as_dirtied=False)
+                path = self._field_for('path', book_id)
+
+            path = path.replace('/', os.sep)
             title = self._field_for('title', book_id, default_value=_('Unknown'))
             author = self._field_for('authors', book_id, default_value=(_('Unknown'),))[0]
             stream = stream_or_path if hasattr(stream_or_path, 'read') else lopen(stream_or_path, 'rb')
@@ -1630,7 +1641,7 @@ class Cache(object):
 
     @write_api
     def create_custom_column(self, label, name, datatype, is_multiple, editable=True, display={}):
-        self.backend.create_custom_column(label, name, datatype, is_multiple, editable=editable, display=display)
+        return self.backend.create_custom_column(label, name, datatype, is_multiple, editable=editable, display=display)
 
     @write_api
     def set_custom_column_metadata(self, num, name=None, label=None, is_editable=None,

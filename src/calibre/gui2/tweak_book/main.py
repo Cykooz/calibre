@@ -6,12 +6,12 @@ from __future__ import (unicode_literals, division, absolute_import,
 __license__ = 'GPL v3'
 __copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
 
-import sys, os, importlib
+import sys, os, importlib, time
 
 from PyQt4.Qt import QIcon
 
 from calibre.constants import islinux, iswindows
-from calibre.gui2 import Application, ORG_NAME, APP_UID, setup_gui_option_parser, detach_gui
+from calibre.gui2 import Application, ORG_NAME, APP_UID, setup_gui_option_parser, detach_gui, decouple
 from calibre.ptempfile import reset_base_dir
 from calibre.utils.config import OptionParser
 
@@ -54,6 +54,7 @@ def _run(args, notify=None):
     opts, args = parser.parse_args(args)
     if getattr(opts, 'detach', False):
         detach_gui()
+    decouple('edit-book-')
     override = 'calibre-edit-book' if islinux else None
     app = Application(args, override_program_name=override)
     app.load_builtin_fonts()
@@ -66,6 +67,12 @@ def _run(args, notify=None):
     if len(args) > 1:
         main.boss.open_book(args[1], edit_file=opts.edit_file, clear_notify_data=False)
     app.exec_()
+    # Ensure that the parse worker has quit so that temp files can be deleted
+    # on windows
+    st = time.time()
+    from calibre.gui2.tweak_book.preview import parse_worker
+    while parse_worker.is_alive() and time.time() - st < 120:
+        time.sleep(0.1)
 
 def main(args=sys.argv):
     _run(args)

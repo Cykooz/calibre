@@ -122,6 +122,7 @@ defs['cover_grid_show_title'] = False
 defs['cover_grid_texture'] = None
 defs['show_vl_tabs'] = False
 defs['show_highlight_toggle_button'] = False
+defs['add_comments_to_email'] = False
 del defs
 # }}}
 
@@ -721,7 +722,7 @@ def choose_files(window, name, title,
         return fd.get_files()
     return None
 
-def choose_save_file(window, name, title, filters=[], all_files=True):
+def choose_save_file(window, name, title, filters=[], all_files=True, initial_dir=None):
     '''
     Ask user to choose a file to save to. Can be a non-existent file.
     :param filters: list of allowable extensions. Each element of the list
@@ -730,9 +731,12 @@ def choose_save_file(window, name, title, filters=[], all_files=True):
                      of extensions.
     :param all_files: If True add All files to filters.
     '''
-    mode = QFileDialog.AnyFile
-    fd = FileDialog(title=title, name=name, filters=filters,
-                    parent=window, add_all_files_filter=all_files, mode=mode)
+    kwargs = dict(title=title, name=name, filters=filters,
+                    parent=window, add_all_files_filter=all_files, mode=QFileDialog.AnyFile)
+    if initial_dir is not None:
+        kwargs['no_save_dir'] = True
+        kwargs['default_dir'] = initial_dir
+    fd = FileDialog(**kwargs)
     fd.setParent(None)
     ans = None
     if fd.accepted:
@@ -762,6 +766,12 @@ def pixmap_to_data(pixmap, format='JPEG', quality=90):
     buf.open(QBuffer.WriteOnly)
     pixmap.save(buf, format, quality=quality)
     return bytes(ba.data())
+
+def decouple(prefix):
+    ' Ensure that config files used by utility code are not the same as those used by the main calibre GUI '
+    dynamic.decouple(prefix)
+    from calibre.gui2.widgets import history
+    history.decouple(prefix)
 
 class ResizableDialog(QDialog):
 

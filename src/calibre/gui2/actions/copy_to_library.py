@@ -12,7 +12,7 @@ from contextlib import closing
 from collections import defaultdict
 
 from PyQt4.Qt import (
-    QToolButton, QDialog, QGridLayout, QIcon, QLabel, QDialogButtonBox,
+    QToolButton, QDialog, QGridLayout, QIcon, QLabel, QDialogButtonBox, QApplication,
     QFormLayout, QCheckBox, QWidget, QScrollArea, QVBoxLayout, Qt, QListWidgetItem, QListWidget)
 
 from calibre.gui2.actions import InterfaceAction
@@ -281,11 +281,18 @@ class DuplicatesQuestion(QDialog):  # {{{
         bb.accepted.connect(self.accept)
         bb.rejected.connect(self.reject)
         self.a = b = bb.addButton(_('Select &all'), bb.ActionRole)
-        b.clicked.connect(self.select_all)
+        b.clicked.connect(self.select_all), b.setIcon(QIcon(I('plus.png')))
         self.n = b = bb.addButton(_('Select &none'), bb.ActionRole)
-        b.clicked.connect(self.select_none)
+        b.clicked.connect(self.select_none), b.setIcon(QIcon(I('minus.png')))
+        self.ctc = b = bb.addButton(_('&Copy to clipboard'), bb.ActionRole)
+        b.clicked.connect(self.copy_to_clipboard), b.setIcon(QIcon(I('edit-copy.png')))
         l.addWidget(bb)
         self.resize(600, 400)
+
+    def copy_to_clipboard(self):
+        items = [('✓' if item.checkState() == Qt.Checked else '✗') + ' ' + unicode(item.text())
+                 for item in self.items]
+        QApplication.clipboard().setText('\n'.join(items))
 
     def select_all(self):
         for i in self.items:

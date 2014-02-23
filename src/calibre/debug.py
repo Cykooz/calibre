@@ -79,6 +79,9 @@ Everything after the -- is passed to the script.
         'Run a plugin that provides a command line interface. For example:\n'
         'calibre-debug -r "Add Books" -- file1 --option1\n'
         'Everything after the -- will be passed to the plugin as arguments.'))
+    parser.add_option('--diff', help=_(
+        'Run the calibre diff tool. For example:\n'
+        'calibre-debug --diff -- file1 file2'))
 
     return parser
 
@@ -227,10 +230,7 @@ def main(args=sys.argv):
         open_local_file(opts.show_gui_debug)
     elif opts.viewer:
         from calibre.gui2.viewer.main import main
-        vargs = ['ebook-viewer', '--debug-javascript']
-        if len(args) > 1:
-            vargs.append(args[-1])
-        main(vargs)
+        main(['ebook-viewer'] + args[1:])
     elif opts.py_console:
         from calibre.utils.pyconsole.main import main
         main()
@@ -274,6 +274,9 @@ def main(args=sys.argv):
             prints(_('No plugin named %s found')%opts.run_plugin)
             raise SystemExit(1)
         plugin.cli_main([plugin.name] + args[1:])
+    elif opts.diff:
+        from calibre.gui2.tweak_book.diff.main import main
+        main(['calibre-diff'] + args[1:])
     elif len(args) >= 2 and args[1].rpartition('.')[-1] in {'py', 'recipe'}:
         run_script(args[1], args[2:])
     elif len(args) >= 2 and args[1].rpartition('.')[-1] in {'mobi', 'azw', 'azw3', 'docx'}:

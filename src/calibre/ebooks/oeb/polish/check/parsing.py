@@ -14,15 +14,16 @@ import cssutils
 from calibre import force_unicode, human_readable, prepare_string_for_xml
 from calibre.ebooks.html_entities import html5_entities
 from calibre.ebooks.oeb.polish.pretty import pretty_script_or_style as fix_style_tag
-from calibre.ebooks.oeb.polish.utils import PositionFinder
+from calibre.ebooks.oeb.polish.utils import PositionFinder, guess_type
 from calibre.ebooks.oeb.polish.check.base import BaseError, WARN, ERROR, INFO
-from calibre.ebooks.oeb.base import OEB_DOCS, XHTML_NS
+from calibre.ebooks.oeb.base import OEB_DOCS, XHTML_NS, urlquote, URL_SAFE
 
 HTML_ENTITTIES = frozenset(html5_entities)
 XML_ENTITIES = {'lt', 'gt', 'amp', 'apos', 'quot'}
 ALL_ENTITIES = HTML_ENTITTIES | XML_ENTITIES
 
 replace_pat = re.compile('&(%s);' % '|'.join(re.escape(x) for x in sorted((HTML_ENTITTIES - XML_ENTITIES))))
+mismatch_pat = re.compile('tag mismatch:.+?line (\d+).+?line \d+')
 
 class XMLParseError(BaseError):
 
@@ -35,6 +36,10 @@ class XMLParseError(BaseError):
 
     def __init__(self, msg, *args, **kwargs):
         BaseError.__init__(self, 'Parsing failed: ' + msg, *args, **kwargs)
+        m = mismatch_pat.search(msg)
+        if m is not None:
+            self.has_multiple_locations = True
+            self.all_locations = [(self.name, int(m.group(1)), None), (self.name, self.line, self.col)]
 
 class HTMLParseError(XMLParseError):
 
@@ -46,7 +51,7 @@ class HTMLParseError(XMLParseError):
 class NamedEntities(BaseError):
 
     level = WARN
-    INDIVIDUAL_FIX = _('Replace all named entities with their character equivalents in this file')
+    INDIVIDUAL_FIX = _('Replace all named entities with their character equivalents in this book')
     HELP = _('Named entities are often only incompletely supported by various book reading software.'
              ' Therefore, it is best to not use them, replacing them with the actual characters they'
              ' represent. This can be done automatically.')
@@ -55,10 +60,48 @@ class NamedEntities(BaseError):
         BaseError.__init__(self, _('Named entities present'), name)
 
     def __call__(self, container):
-        raw = container.raw_data(self.name)
-        nraw = replace_pat.sub(lambda m:html5_entities[m.group(1)], raw)
-        with container.open(self.name, 'wb') as f:
-            f.write(nraw.encode('utf-8'))
+        changed = False
+        from calibre.ebooks.oeb.polish.check.main import XML_TYPES
+        check_types = XML_TYPES | OEB_DOCS
+        for name, mt in container.mime_map.iteritems():
+            if mt in check_types:
+                raw = container.raw_data(name)
+                nraw = replace_pat.sub(lambda m:html5_entities[m.group(1)], raw)
+                if raw != nraw:
+                    changed = True
+                    with container.open(name, 'wb') as f:
+                        f.write(nraw.encode('utf-8'))
+        return changed
+
+class EscapedName(BaseError):
+
+    level = WARN
+
+    def __init__(self, name):
+        from calibre.utils.filenames import ascii_filename
+        BaseError.__init__(self, _('Filename contains unsafe characters'), name)
+        qname = urlquote(name)
+        def esc(n):
+            return ''.join(x if x in URL_SAFE else '_' for x in n)
+        self.sname = '/'.join(esc(ascii_filename(x)) for x in name.split('/'))
+        self.HELP = _(
+            'The filename {0} contains unsafe characters, that must be escaped, like'
+            ' this {1}. This can cause problems with some ebook readers. To be'
+            ' absolutely safe, use only the English alphabet [a-z], the numbers [0-9],'
+            ' underscores and hyphens in your file names. While many other characters'
+            ' are allowed, they may cause problems with some software.').format(name, qname)
+        self.INDIVIDUAL_FIX = _(
+            'Rename the file {0} to {1}').format(name, self.sname)
+
+    def __call__(self, container):
+        from calibre.ebooks.oeb.polish.replace import rename_files
+        all_names = set(container.name_path_map)
+        bn, ext = self.sname.rpartition('.')[0::2]
+        c = 0
+        while self.sname in all_names:
+            c += 1
+            self.sname = '%s_%d.%s' % (bn, c, ext)
+        rename_files(container, {self.name:self.sname})
         return True
 
 class TooLarge(BaseError):
@@ -87,7 +130,7 @@ class BadNamespace(BaseError):
     def __init__(self, name, namespace):
         BaseError.__init__(self, _('Invalid or missing namespace'), name)
         self.HELP = prepare_string_for_xml(_(
-            'This file has {0}. Its namespace must be {1}. Se the namespace by defining the xmlns'
+            'This file has {0}. Its namespace must be {1}. Set the namespace by defining the xmlns'
             ' attribute on the <html> element, like this <html xmlns="{1}">').format(
                 (_('incorrect namespace %s') % namespace) if namespace else _('no namespace'),
                 XHTML_NS))
@@ -166,8 +209,9 @@ def check_xml_parsing(name, mt, raw):
     except Exception as err:
         return errors + [errcls(err.message, name)]
 
-    if mt in OEB_DOCS and root.nsmap.get(root.prefix, None) != XHTML_NS:
-        errors.append(BadNamespace(name, root.nsmap.get(root.prefix, None)))
+    if mt in OEB_DOCS:
+        if root.nsmap.get(root.prefix, None) != XHTML_NS:
+            errors.append(BadNamespace(name, root.nsmap.get(root.prefix, None)))
 
     return errors
 
@@ -205,6 +249,28 @@ class CSSError(BaseError):
         return True
 
 pos_pats = (re.compile(r'\[(\d+):(\d+)'), re.compile(r'(\d+), (\d+)\)'))
+
+class DuplicateId(BaseError):
+
+    has_multiple_locations = True
+
+    INDIVIDUAL_FIX = _(
+        'Remove the duplicate ids from all but the first element')
+
+    def __init__(self, name, eid, locs):
+        BaseError.__init__(self, _('Duplicate id: %s') % eid, name)
+        self.HELP = _(
+            'The id {0} is present on more than one element in {1}. This is'
+            ' not allowed. Remove the id from all but one of the elements').format(eid, name)
+        self.all_locations = [(name, lnum, None) for lnum in sorted(locs)]
+        self.duplicate_id = eid
+
+    def __call__(self, container):
+        elems = [e for e in container.parsed(self.name).xpath('//*[@id]') if e.get('id') == self.duplicate_id]
+        for e in elems[1:]:
+            e.attrib.pop('id')
+        container.dirty(self.name)
+        return True
 
 class ErrorHandler(object):
 
@@ -250,3 +316,30 @@ def check_css_parsing(name, raw, line_offset=0, is_declaration=False):
     for err in log.errors:
         err.line += line_offset
     return log.errors
+
+def check_filenames(container):
+    errors = []
+    all_names = set(container.name_path_map) - container.names_that_must_not_be_changed
+    for name in all_names:
+        if urlquote(name) != name:
+            errors.append(EscapedName(name))
+    return errors
+
+def check_ids(container):
+    errors = []
+    mts = set(OEB_DOCS) | {guess_type('a.opf'), guess_type('a.ncx')}
+    for name, mt in container.mime_map.iteritems():
+        if mt in mts:
+            root = container.parsed(name)
+            seen_ids = {}
+            dups = {}
+            for elem in root.xpath('//*[@id]'):
+                eid = elem.get('id')
+                if eid in seen_ids:
+                    if eid not in dups:
+                        dups[eid] = [seen_ids[eid]]
+                    dups[eid].append(elem.sourceline)
+                else:
+                    seen_ids[eid] = elem.sourceline
+            errors.extend(DuplicateId(name, eid, locs) for eid, locs in dups.iteritems())
+    return errors

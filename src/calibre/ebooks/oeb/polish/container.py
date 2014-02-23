@@ -16,7 +16,7 @@ from future_builtins import zip
 from lxml import etree
 from cssutils import replaceUrls, getUrls
 
-from calibre import guess_type as _guess_type, CurrentDir
+from calibre import CurrentDir
 from calibre.customize.ui import (plugin_for_input_format,
         plugin_for_output_format)
 from calibre.ebooks.chardet import xml_to_unicode
@@ -31,7 +31,7 @@ from calibre.ebooks.oeb.base import (
     rewrite_links, iterlinks, itercsslinks, urlquote, urlunquote)
 from calibre.ebooks.oeb.polish.errors import InvalidBook, DRMError
 from calibre.ebooks.oeb.polish.parsing import parse as parse_html_tweak
-from calibre.ebooks.oeb.polish.utils import PositionFinder, CommentFinder
+from calibre.ebooks.oeb.polish.utils import PositionFinder, CommentFinder, guess_type
 from calibre.ebooks.oeb.parse_utils import NotHTML, parse_html, RECOVER_PARSER
 from calibre.ptempfile import PersistentTemporaryDirectory, PersistentTemporaryFile
 from calibre.utils.filenames import nlinks_file, hardlink_file
@@ -41,8 +41,6 @@ from calibre.utils.zipfile import ZipFile
 
 exists, join, relpath = os.path.exists, os.path.join, os.path.relpath
 
-def guess_type(x):
-    return _guess_type(x)[0] or 'application/octet-stream'
 
 OEB_FONTS = {guess_type('a.ttf'), guess_type('b.otf'), guess_type('a.woff'), 'application/x-font-ttf', 'application/x-font-otf'}
 OPF_NAMESPACES = {'opf':OPF2_NS, 'dc':DC11_NS}
@@ -95,6 +93,7 @@ class Container(object):  # {{{
 
     book_type = 'oeb'
     SUPPORTS_TITLEPAGES = True
+    SUPPORTS_FILENAMES = True
 
     def __init__(self, rootpath, opfpath, log, clone_data=None):
         self.root = clone_data['root'] if clone_data is not None else os.path.abspath(rootpath)
@@ -144,7 +143,8 @@ class Container(object):  # {{{
         for item in self.opf_xpath('//opf:manifest/opf:item[@href and @media-type]'):
             href = item.get('href')
             name = self.href_to_name(href, self.opf_name)
-            if name in self.mime_map:
+            if name in self.mime_map and name != self.opf_name:
+                # some epubs include the opf in the manifest with an incorrect mime type
                 self.mime_map[name] = item.get('media-type')
 
     def clone_data(self, dest_dir):
@@ -171,7 +171,7 @@ class Container(object):  # {{{
             ans = 'application/xhtml+xml'
         return ans
 
-    def add_file(self, name, data, media_type=None):
+    def add_file(self, name, data, media_type=None, spine_index=None):
         ''' Add a file to this container. Entries for the file are
         automatically created in the OPF manifest and spine
         (if the file is a text document) '''
@@ -209,7 +209,7 @@ class Container(object):  # {{{
         if mt in OEB_DOCS:
             spine = self.opf_xpath('//opf:spine')[0]
             si = manifest.makeelement(OPF('itemref'), idref=item_id)
-            self.insert_into_xml(spine, si)
+            self.insert_into_xml(spine, si, index=spine_index)
 
     def rename(self, current_name, new_name):
         ''' Renames a file from current_name to new_name. It automatically
@@ -403,9 +403,9 @@ class Container(object):  # {{{
             data, strip_encoding_pats=True, assume_utf8=True, resolve_entities=True)
         return etree.fromstring(data, parser=RECOVER_PARSER)
 
-    def parse_xhtml(self, data, fname='<string>'):
+    def parse_xhtml(self, data, fname='<string>', force_html5_parse=False):
         if self.tweak_mode:
-            return parse_html_tweak(data, log=self.log, decoder=self.decode)
+            return parse_html_tweak(data, log=self.log, decoder=self.decode, force_html5_parse=force_html5_parse)
         else:
             try:
                 return parse_html(
@@ -429,7 +429,7 @@ class Container(object):  # {{{
     def raw_data(self, name, decode=True):
         ans = self.open(name).read()
         mime = self.mime_map.get(name, guess_type(name))
-        if decode and (mime in OEB_STYLES or mime in OEB_DOCS or mime[-4:] in {'+xml', '/xml'}):
+        if decode and (mime in OEB_STYLES or mime in OEB_DOCS or mime == 'text/plain' or mime[-4:] in {'+xml', '/xml'}):
             ans = self.decode(ans)
         return ans
 
@@ -985,9 +985,13 @@ class EpubContainer(Container):
             f.write(guess_type('a.epub'))
         zip_rebuilder(self.root, outpath)
 
-    @property
+    @dynamic_property
     def path_to_ebook(self):
-        return self.pathtoepub
+        def fget(self):
+            return self.pathtoepub
+        def fset(self, val):
+            self.pathtoepub = val
+        return property(fget=fget, fset=fset)
 
 # }}}
 
@@ -1035,6 +1039,7 @@ class AZW3Container(Container):
 
     book_type = 'azw3'
     SUPPORTS_TITLEPAGES = False
+    SUPPORTS_FILENAMES = False
 
     def __init__(self, pathtoazw3, log, clone_data=None, tdir=None):
         if clone_data is not None:
@@ -1096,9 +1101,13 @@ class AZW3Container(Container):
             outpath = self.pathtoazw3
         opf_to_azw3(self.name_path_map[self.opf_name], outpath, self.log)
 
-    @property
+    @dynamic_property
     def path_to_ebook(self):
-        return self.pathtoazw3
+        def fget(self):
+            return self.pathtoazw3
+        def fset(self, val):
+            self.pathtoazw3 = val
+        return property(fget=fget, fset=fset)
 
     @property
     def names_that_must_not_be_changed(self):

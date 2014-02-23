@@ -6,11 +6,13 @@ from __future__ import (unicode_literals, division, absolute_import,
 __license__ = 'GPL v3'
 __copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
 
+import os
 from collections import defaultdict
 from urlparse import urlparse
 
 from calibre.ebooks.oeb.base import OEB_DOCS, OEB_STYLES
-from calibre.ebooks.oeb.polish.container import guess_type, OEB_FONTS
+from calibre.ebooks.oeb.polish.container import OEB_FONTS
+from calibre.ebooks.oeb.polish.utils import guess_type, actual_case_for_name, corrected_case_for_name
 from calibre.ebooks.oeb.polish.check.base import BaseError, WARN, INFO
 
 class BadLink(BaseError):
@@ -18,6 +20,48 @@ class BadLink(BaseError):
     HELP = _('The resource pointed to by this link does not exist. You should'
              ' either fix, or remove the link.')
     level = WARN
+
+class CaseMismatch(BadLink):
+
+    def __init__(self, href, corrected_name, name, lnum, col):
+        BadLink.__init__(self, _('The linked to resource {0} does not exist').format(href), name, line=lnum, col=col)
+        self.HELP = _('The case of the link {0} and the case of the actual file it points to {1}'
+                      ' do not agree. You should change either the case of the link or rename the file.').format(
+                          href, corrected_name)
+        self.INDIVIDUAL_FIX = _('Change the case of the link to match the actual file')
+        self.corrected_name = corrected_name
+        self.href = href
+
+    def __call__(self, container):
+        frag = urlparse(self.href).fragment
+        nhref = container.name_to_href(self.corrected_name, self.name)
+        if frag:
+            nhref += '#' + frag
+        orig_href = self.href
+        class LinkReplacer(object):
+            replaced = False
+            def __call__(self, url):
+                if url != orig_href:
+                    return url
+                self.replaced = True
+                return nhref
+        replacer = LinkReplacer()
+        container.replace_links(self.name, replacer)
+        return replacer.replaced
+
+class BadDestinationType(BaseError):
+
+    level = WARN
+
+    def __init__(self, link_source, link_dest, link_elem):
+        BaseError.__init__(self, _('Link points to a file that is not a text document'), link_source, line=link_elem.sourceline)
+        self.HELP = _('The link "{0}" points to a file <i>{1}</i> that is not a text (HTML) document.'
+                      ' Many ebook readers will be unable to follow such a link. You should'
+                      ' either remove the link or change it to point to a text document.'
+                      ' For example, if it points to an image, you can create small wrapper'
+                      ' document that contains the image and change the link to point to that.').format(
+                          link_elem.get('href'), link_dest)
+        self.bad_href = link_elem.get('href')
 
 class FileLink(BadLink):
 
@@ -81,18 +125,33 @@ class MimetypeMismatch(BaseError):
                       ' The recommended mimetype for files with the extension "{2}" is {3}.'
                       ' You should change either the file extension or the mimetype in the OPF.').format(
                           name, opf_mt, ext, ext_mt)
-        self.INDIVIDUAL_FIX = _('Change the mimetype for this file in the OPF to %s') % ext_mt
+        if opf_mt in OEB_DOCS and name in {n for n, l in container.spine_names}:
+            self.INDIVIDUAL_FIX = _('Change the file extension to .xhtml')
+            self.change_ext_to = 'xhtml'
+        else:
+            self.INDIVIDUAL_FIX = _('Change the mimetype for this file in the OPF to %s') % ext_mt
+            self.change_ext_to = None
 
     def __call__(self, container):
         changed = False
-        for item in container.opf_xpath('//opf:manifest/opf:item[@href and @media-type="%s"]' % self.opf_mt):
-            name = container.href_to_name(item.get('href'), container.opf_name)
-            if name == self.file_name:
-                changed = True
-                item.set('media-type', self.ext_mt)
-                container.mime_map[name] = self.ext_mt
-        if changed:
-            container.dirty(container.opf_name)
+        if self.change_ext_to is not None:
+            from calibre.ebooks.oeb.polish.replace import rename_files
+            new_name = self.file_name.rpartition('.')[0] + '.' + self.change_ext_to
+            c = 0
+            while container.has_name(new_name):
+                c += 1
+                new_name = self.file_name.rpartition('.')[0] + ('%d.' % c) + self.change_ext_to
+            rename_files(container, {self.file_name:new_name})
+            changed = True
+        else:
+            for item in container.opf_xpath('//opf:manifest/opf:item[@href and @media-type="%s"]' % self.opf_mt):
+                name = container.href_to_name(item.get('href'), container.opf_name)
+                if name == self.file_name:
+                    changed = True
+                    item.set('media-type', self.ext_mt)
+                    container.mime_map[name] = self.ext_mt
+            if changed:
+                container.dirty(container.opf_name)
         return changed
 
 def check_mimetypes(container):
@@ -101,7 +160,19 @@ def check_mimetypes(container):
     for name, mt in container.mime_map.iteritems():
         gt = container.guess_type(name)
         if mt != gt:
+            if mt == 'application/oebps-page-map+xml' and name.lower().endswith('.xml'):
+                continue
             a(MimetypeMismatch(container, name, mt, gt))
+    return errors
+
+def check_link_destinations(container):
+    errors = []
+    for name, mt in container.mime_map.iteritems():
+        if mt in OEB_DOCS:
+            for a in container.parsed(name).xpath('//*[local-name()="a" and @href]'):
+                tname = container.href_to_name(a.get('href'), name)
+                if tname and tname in container.mime_map and container.mime_map[tname] not in OEB_DOCS:
+                    errors.append(BadDestinationType(name, tname, a))
     return errors
 
 def check_links(container):
@@ -122,9 +193,23 @@ def check_links(container):
                 tname = container.href_to_name(href, name)
                 if tname is not None:
                     if container.exists(tname):
-                        links_map[name].add(tname)
+                        if tname in container.mime_map:
+                            links_map[name].add(tname)
+                        else:
+                            # Filesystem says the file exists, but it is not in
+                            # the mime_map, so either there is a case mismatch
+                            # or the link is a directory
+                            apath = container.name_to_abspath(tname)
+                            if os.path.isdir(apath):
+                                a(BadLink(_('The linked resource %s is a directory') % fl(href), name, lnum, col))
+                            else:
+                                a(CaseMismatch(href, actual_case_for_name(container, tname), name, lnum, col))
                     else:
-                        a(BadLink(_('The linked resource %s does not exist') % fl(href), name, lnum, col))
+                        cname = corrected_case_for_name(container, tname)
+                        if cname is not None:
+                            a(CaseMismatch(href, cname, name, lnum, col))
+                        else:
+                            a(BadLink(_('The linked resource %s does not exist') % fl(href), name, lnum, col))
                 else:
                     purl = urlparse(href)
                     if purl.scheme == 'file':
@@ -133,12 +218,12 @@ def check_links(container):
                         a(LocalLink(_('The link %s points to a file outside the book') % fl(href), name, lnum, col))
 
     spine_docs = {name for name, linear in container.spine_names}
-    spine_styles = {tname for name in spine_docs for tname in links_map[name] if container.mime_map[tname] in OEB_STYLES}
+    spine_styles = {tname for name in spine_docs for tname in links_map[name] if container.mime_map.get(tname, None) in OEB_STYLES}
     num = -1
     while len(spine_styles) > num:
         # Handle import rules in stylesheets
         num = len(spine_styles)
-        spine_styles |= {tname for name in spine_styles for tname in links_map[name] if container.mime_map[tname] in OEB_STYLES}
+        spine_styles |= {tname for name in spine_styles for tname in links_map[name] if container.mime_map.get(tname, None) in OEB_STYLES}
     seen = set(OEB_DOCS) | set(OEB_STYLES)
     spine_resources = {tname for name in spine_docs | spine_styles for tname in links_map[name] if container.mime_map[tname] not in seen}
     unreferenced = set()

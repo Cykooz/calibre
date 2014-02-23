@@ -53,9 +53,11 @@ class SyntaxHighlighter(QSyntaxHighlighter):
     def highlightBlock(self, text):
         try:
             state = self.previousBlockState()
+            self.setCurrentBlockUserData(None)  # Ensure that any stale user data is discarded
             if state == -1:
                 state = 0
             state = self.state_class(state)
+            state.get_user_data, state.set_user_data = self.currentBlockUserData, self.setCurrentBlockUserData
             for i, num, fmt in run_loop(state, self.state_map, self.formats, unicode(text)):
                 if fmt is not None:
                     self.setFormat(i, num, fmt)
@@ -63,4 +65,6 @@ class SyntaxHighlighter(QSyntaxHighlighter):
         except:
             import traceback
             traceback.print_exc()
+        finally:
+            QApplication.processEvents()  # Try to keep the editor responsive to user input
 

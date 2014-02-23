@@ -6,7 +6,7 @@ from __future__ import (unicode_literals, division, absolute_import,
 __license__ = 'GPL v3'
 __copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
 
-import unicodedata
+import unicodedata, os
 from functools import partial
 from itertools import product
 from future_builtins import map
@@ -16,7 +16,7 @@ from PyQt4.Qt import (
     QVBoxLayout, QStackedWidget, QTabWidget, QImage, QPixmap, pyqtSignal,
     QMenu, QHBoxLayout, QTimer, QUrl)
 
-from calibre.constants import __appname__, get_version
+from calibre.constants import __appname__, get_version, isosx
 from calibre.gui2 import elided_text, open_url
 from calibre.gui2.keyboard import Manager as KeyboardManager
 from calibre.gui2.main_window import MainWindow
@@ -25,6 +25,7 @@ from calibre.gui2.tweak_book import current_container, tprefs, actions, capitali
 from calibre.gui2.tweak_book.file_list import FileListWidget
 from calibre.gui2.tweak_book.job import BlockingJob
 from calibre.gui2.tweak_book.boss import Boss
+from calibre.gui2.tweak_book.undo import CheckpointView
 from calibre.gui2.tweak_book.preview import Preview
 from calibre.gui2.tweak_book.search import SearchPanel
 from calibre.gui2.tweak_book.check import Check
@@ -191,6 +192,8 @@ class CursorPositionWidget(QWidget):  # {{{
             except Exception:
                 name = None
             text = _('Line: {0} : {1}').format(line, col)
+            if not name:
+                name = {'\t':'TAB'}.get(character, None)
             if name:
                 text = name + ' : ' + text
             self.la.setText(text)
@@ -229,7 +232,9 @@ class Main(MainWindow):
         self.status_bar.addPermanentWidget(self.boss.save_manager.status_widget)
         self.cursor_position_widget = CursorPositionWidget(self)
         self.status_bar.addPermanentWidget(self.cursor_position_widget)
-        self.status_bar.addWidget(QLabel(_('{0} {1} created by {2}').format(__appname__, get_version(), 'Kovid Goyal')))
+        self.status_bar_default_msg = la = QLabel(_('{0} {1} created by {2}').format(__appname__, get_version(), 'Kovid Goyal'))
+        la.base_template = unicode(la.text())
+        self.status_bar.addWidget(la)
         f = self.status_bar.font()
         f.setBold(True)
         self.status_bar.setFont(f)
@@ -265,7 +270,9 @@ class Main(MainWindow):
         group = _('Global Actions')
 
         def reg(icon, text, target, sid, keys, description):
-            ac = actions[sid] = QAction(QIcon(I(icon)), text, self) if icon else QAction(text, self)
+            if not isinstance(icon, QIcon):
+                icon = QIcon(I(icon))
+            ac = actions[sid] = QAction(icon, text, self) if icon else QAction(text, self)
             ac.setObjectName('action-' + sid)
             if target is not None:
                 ac.triggered.connect(target)
@@ -280,9 +287,11 @@ class Main(MainWindow):
                                    'new-file', (), _('Create a new file in the current book'))
         self.action_import_files = reg(None, _('&Import files into book'), self.boss.add_files, 'new-files', (), _('Import files into book'))
         self.action_open_book = reg('document_open.png', _('Open &book'), self.boss.open_book, 'open-book', 'Ctrl+O', _('Open a new book'))
-        self.action_global_undo = reg('back.png', _('&Revert to before'), self.boss.do_global_undo, 'global-undo', 'Ctrl+Left',
+        # Qt does not generate shortcut overrides for cmd+arrow on os x which
+        # means these shortcuts interfere with editing
+        self.action_global_undo = reg('back.png', _('&Revert to before'), self.boss.do_global_undo, 'global-undo', () if isosx else 'Ctrl+Left',
                                       _('Revert book to before the last action (Undo)'))
-        self.action_global_redo = reg('forward.png', _('&Revert to after'), self.boss.do_global_redo, 'global-redo', 'Ctrl+Right',
+        self.action_global_redo = reg('forward.png', _('&Revert to after'), self.boss.do_global_redo, 'global-redo', () if isosx else 'Ctrl+Right',
                                       _('Revert book state to after the next action (Redo)'))
         self.action_save = reg('save.png', _('&Save'), self.boss.save_book, 'save-book', 'Ctrl+S', _('Save book'))
         self.action_save.setEnabled(False)
@@ -310,21 +319,25 @@ class Main(MainWindow):
 
         def ereg(icon, text, target, sid, keys, description):
             return reg(icon, text, partial(self.boss.editor_action, target), sid, keys, description)
-        register_text_editor_actions(ereg)
+        register_text_editor_actions(ereg, self.palette())
 
         # Tool actions
         group = _('Tools')
         self.action_toc = reg('toc.png', _('&Edit Table of Contents'), self.boss.edit_toc, 'edit-toc', (), _('Edit Table of Contents'))
+        self.action_inline_toc = reg('chapters.png', _('&Insert inline Table of Contents'),
+                                     self.boss.insert_inline_toc, 'insert-inline-toc', (), _('Insert inline Table of Contents'))
         self.action_fix_html_current = reg('html-fix.png', _('&Fix HTML'), partial(self.boss.fix_html, True), 'fix-html-current', (),
                                            _('Fix HTML in the current file'))
         self.action_fix_html_all = reg('html-fix.png', _('&Fix HTML - all files'), partial(self.boss.fix_html, False), 'fix-html-all', (),
                                        _('Fix HTML in all files'))
-        self.action_pretty_current = reg('format-justify-fill.png', _('&Beautify current file'), partial(self.boss.pretty_print, True), 'pretty-current', (),
+        self.action_pretty_current = reg('beautify.png', _('&Beautify current file'), partial(self.boss.pretty_print, True), 'pretty-current', (),
                                            _('Beautify current file'))
-        self.action_pretty_all = reg('format-justify-fill.png', _('&Beautify all files'), partial(self.boss.pretty_print, False), 'pretty-all', (),
+        self.action_pretty_all = reg('beautify.png', _('&Beautify all files'), partial(self.boss.pretty_print, False), 'pretty-all', (),
                                        _('Beautify all files'))
         self.action_insert_char = reg('character-set.png', _('&Insert special character'), self.boss.insert_character, 'insert-character', (),
                                       _('Insert special character'))
+        self.action_rationalize_folders = reg('mimetypes/dir.png', _('&Arrange into folders'), self.boss.rationalize_folders, 'rationalize-folders', (),
+                                      _('Arrange into folders'))
 
         # Polish actions
         group = _('Polish Book')
@@ -337,6 +350,9 @@ class Main(MainWindow):
         self.action_smarten_punctuation = reg(
             'smarten-punctuation.png', _('&Smarten punctuation'), partial(
                 self.boss.polish, 'smarten_punctuation', _('Smarten punctuation')), 'smarten-punctuation', (), _('Smarten punctuation'))
+        self.action_remove_unused_css = reg(
+            'edit-clear.png', _('Remove &unused CSS rules'), partial(
+                self.boss.polish, 'remove_unused_css', _('Remove unused CSS rules')), 'remove-unused-css', (), _('Remove unused CSS rules'))
 
         # Preview actions
         group = _('Preview')
@@ -396,6 +412,11 @@ class Main(MainWindow):
         self.action_browse_images = reg(
             'view-image.png', _('&Browse images in book'), self.boss.browse_images, 'browse-images', (), _(
                 'Browse images in the books visually'))
+        self.action_multiple_split = reg(
+            'auto_author_sort.png', _('&Split at multiple locations'), self.boss.multisplit, 'multisplit', (), _(
+                'Split HTML file at multiple locations'))
+        self.action_compare_book = reg('diff.png', _('&Compare to another book'), self.boss.compare_book, 'compare-book', (), _(
+            'Compare to another book'))
 
     def create_menubar(self):
         p, q = self.create_application_menubar()
@@ -414,6 +435,7 @@ class Main(MainWindow):
         f.addAction(self.action_save)
         f.addAction(self.action_save_copy)
         f.addSeparator()
+        f.addAction(self.action_compare_book)
         f.addAction(self.action_quit)
 
         e = b.addMenu(_('&Edit'))
@@ -432,12 +454,16 @@ class Main(MainWindow):
         e.addAction(self.action_preferences)
 
         e = b.addMenu(_('&Tools'))
-        e.addAction(self.action_toc)
+        tm = e.addMenu(_('Table of Contents'))
+        tm.addAction(self.action_toc)
+        tm.addAction(self.action_inline_toc)
         e.addAction(self.action_embed_fonts)
         e.addAction(self.action_subset_fonts)
         e.addAction(self.action_smarten_punctuation)
+        e.addAction(self.action_remove_unused_css)
         e.addAction(self.action_fix_html_all)
         e.addAction(self.action_pretty_all)
+        e.addAction(self.action_rationalize_folders)
         e.addAction(self.action_check_book)
 
         e = b.addMenu(_('&View'))
@@ -514,7 +540,7 @@ class Main(MainWindow):
         a(self.action_help)
 
         a = create(_('Polish book tool bar'), 'polish').addAction
-        for x in ('embed_fonts', 'subset_fonts', 'smarten_punctuation'):
+        for x in ('embed_fonts', 'subset_fonts', 'smarten_punctuation', 'remove_unused_css'):
             a(getattr(self, 'action_' + x))
 
     def create_docks(self):
@@ -564,12 +590,20 @@ class Main(MainWindow):
         d.close()  # Hidden by default
         d.visibilityChanged.connect(self.toc_view.visibility_changed)
 
+        d = create(_('Checkpoints'), 'checkpoints')
+        d.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea | Qt.BottomDockWidgetArea | Qt.TopDockWidgetArea)
+        self.checkpoints = CheckpointView(self.boss.global_undo, parent=d)
+        d.setWidget(self.checkpoints)
+        self.addDockWidget(Qt.LeftDockWidgetArea, d)
+        d.close()  # Hidden by default
+
     def resizeEvent(self, ev):
         self.blocking_job.resize(ev.size())
         return super(Main, self).resizeEvent(ev)
 
     def update_window_title(self):
-        self.setWindowTitle(self.current_metadata.title + ' [%s] - %s' %(current_container().book_type.upper(), self.APP_NAME))
+        fname = os.path.basename(current_container().path_to_ebook)
+        self.setWindowTitle(self.current_metadata.title + ' [%s] :: %s :: %s' %(current_container().book_type.upper(), fname, self.APP_NAME))
 
     def closeEvent(self, e):
         if not self.boss.confirm_quit():

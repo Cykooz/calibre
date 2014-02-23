@@ -11,7 +11,7 @@ from functools import partial
 from PyQt4.Qt import (QSize, QSizePolicy, QUrl, SIGNAL, Qt, pyqtProperty,
         QPainter, QPalette, QBrush, QDialog, QColor, QPoint, QImage, QRegion,
         QIcon, pyqtSignature, QAction, QMenu, QString, pyqtSignal,
-        QSwipeGesture, QApplication, pyqtSlot)
+        QApplication, pyqtSlot)
 from PyQt4.QtWebKit import QWebPage, QWebView, QWebSettings, QWebElement
 
 from calibre.gui2.viewer.flip import SlideFlip
@@ -26,6 +26,7 @@ from calibre.gui2.viewer.config import config, ConfigDialog, load_themes
 from calibre.gui2.viewer.image_popup import ImagePopup
 from calibre.gui2.viewer.table_popup import TablePopup
 from calibre.gui2.viewer.inspector import WebInspector
+from calibre.gui2.viewer.gestures import GestureHandler
 from calibre.ebooks.oeb.display.webview import load_html
 from calibre.constants import isxp, iswindows
 # }}}
@@ -126,8 +127,7 @@ class Document(QWebPage):  # {{{
         mf.setScrollBarPolicy(Qt.Horizontal, Qt.ScrollBarAlwaysOff)
 
     def set_user_stylesheet(self, opts):
-        bg = opts.background_color or 'white'
-        brules = ['background-color: %s !important'%bg]
+        brules = ['background-color: %s !important'%opts.background_color] if opts.background_color else ['background-color: white']
         prefix = '''
             body { %s  }
         '''%('; '.join(brules))
@@ -483,10 +483,12 @@ class DocumentView(QWebView):  # {{{
 
     magnification_changed = pyqtSignal(object)
     DISABLED_BRUSH = QBrush(Qt.lightGray, Qt.Dense5Pattern)
+    gesture_handler = lambda s, e: False
 
     def initialize_view(self, debug_javascript=False):
         self.setRenderHints(QPainter.Antialiasing|QPainter.TextAntialiasing|QPainter.SmoothPixmapTransform)
         self.flipper = SlideFlip(self)
+        self.gesture_handler = GestureHandler(self)
         self.is_auto_repeat_event = False
         self.debug_javascript = debug_javascript
         self.shortcuts =  Shortcuts(SHORTCUTS, 'shortcuts/viewer')
@@ -562,7 +564,6 @@ class DocumentView(QWebView):  # {{{
             else:
                 m.addAction(name, a[key], self.shortcuts.get_sequences(key)[0])
         self.goto_location_action.setMenu(self.goto_location_menu)
-        self.grabGesture(Qt.SwipeGesture)
 
         self.restore_fonts_action = QAction(_('Default font size'), self)
         self.restore_fonts_action.setCheckable(True)
@@ -639,6 +640,7 @@ class DocumentView(QWebView):  # {{{
                          self.document.font_magnification_step)
 
     def contextMenuEvent(self, ev):
+        from_touch = ev.reason() == ev.Other
         mf = self.document.mainFrame()
         r = mf.hitTestContent(ev.pos())
         img = r.pixmap()
@@ -704,6 +706,19 @@ class DocumentView(QWebView):  # {{{
 
         for plugin in self.document.all_viewer_plugins:
             plugin.customize_context_menu(menu, ev, r)
+
+        if from_touch:
+            from calibre.constants import plugins
+            pi = plugins['progress_indicator'][0]
+            for x in (menu, self.goto_location_menu):
+                if hasattr(pi, 'set_touch_menu_style'):
+                    pi.set_touch_menu_style(x)
+            helpt = QAction(QIcon(I('help.png')), _('Show supported touch screen gestures'), menu)
+            helpt.triggered.connect(self.gesture_handler.show_help)
+            menu.insertAction(menu.actions()[0], helpt)
+        else:
+            self.goto_location_menu.setStyle(self.style())
+        self.context_menu = menu
         menu.exec_(ev.globalPos())
 
     def inspect(self):
@@ -1259,23 +1274,9 @@ class DocumentView(QWebView):  # {{{
         return QWebView.resizeEvent(self, event)
 
     def event(self, ev):
-        if ev.type() == ev.Gesture:
-            swipe = ev.gesture(Qt.SwipeGesture)
-            if swipe is not None:
-                self.handle_swipe(swipe)
-                return True
+        if self.gesture_handler(ev):
+            return True
         return QWebView.event(self, ev)
-
-    def handle_swipe(self, swipe):
-        if swipe.state() == Qt.GestureFinished:
-            if swipe.horizontalDirection() == QSwipeGesture.Left:
-                self.previous_page()
-            elif swipe.horizontalDirection() == QSwipeGesture.Right:
-                self.next_page()
-            elif swipe.verticalDirection() == QSwipeGesture.Up:
-                self.goto_previous_section()
-            elif swipe.horizontalDirection() == QSwipeGesture.Down:
-                self.goto_next_section()
 
     def mouseReleaseEvent(self, ev):
         opos = self.document.ypos

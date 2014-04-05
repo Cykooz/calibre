@@ -8,7 +8,7 @@ import os, math, json
 from base64 import b64encode
 from functools import partial
 
-from PyQt4.Qt import (QSize, QSizePolicy, QUrl, SIGNAL, Qt, pyqtProperty,
+from PyQt4.Qt import (QSize, QSizePolicy, QUrl, Qt, pyqtProperty,
         QPainter, QPalette, QBrush, QDialog, QColor, QPoint, QImage, QRegion,
         QIcon, pyqtSignature, QAction, QMenu, QString, pyqtSignal,
         QApplication, pyqtSlot)
@@ -48,6 +48,7 @@ class Document(QWebPage):  # {{{
     page_turn = pyqtSignal(object)
     mark_element = pyqtSignal(QWebElement)
     settings_changed = pyqtSignal()
+    animated_scroll_done_signal = pyqtSignal()
 
     def set_font_settings(self, opts):
         settings = self.settings()
@@ -160,6 +161,7 @@ class Document(QWebPage):  # {{{
         screen_width = QApplication.desktop().screenGeometry().width()
         # Leave some space for the scrollbar and some border
         self.max_fs_width = min(opts.max_fs_width, screen_width-50)
+        self.max_fs_height = opts.max_fs_height
         self.fullscreen_clock = opts.fullscreen_clock
         self.fullscreen_scrollbar = opts.fullscreen_scrollbar
         self.fullscreen_pos = opts.fullscreen_pos
@@ -205,7 +207,7 @@ class Document(QWebPage):  # {{{
 
     @pyqtSignature("")
     def animated_scroll_done(self):
-        self.emit(SIGNAL('animated_scroll_done()'))
+        self.animated_scroll_done_signal.emit()
 
     @property
     def hyphenatable(self):
@@ -280,11 +282,16 @@ class Document(QWebPage):  # {{{
             ))
         force_fullscreen_layout = bool(getattr(last_loaded_path,
                                                'is_single_page', False))
-        f = 'true' if force_fullscreen_layout else 'false'
-        side_margin = self.javascript('window.paged_display.layout(%s)'%f, typ=int)
+        self.update_contents_size_for_paged_mode(force_fullscreen_layout)
+
+    def update_contents_size_for_paged_mode(self, force_fullscreen_layout=None):
         # Setup the contents size to ensure that there is a right most margin.
         # Without this WebKit renders the final column with no margin, as the
         # columns extend beyond the boundaries (and margin) of body
+        if force_fullscreen_layout is None:
+            force_fullscreen_layout = self.javascript('window.paged_display.is_full_screen_layout', typ=bool)
+        f = 'true' if force_fullscreen_layout else 'false'
+        side_margin = self.javascript('window.paged_display.layout(%s)'%f, typ=int)
         mf = self.mainFrame()
         sz = mf.contentsSize()
         scroll_width = self.javascript('document.body.scrollWidth', int)
@@ -310,7 +317,7 @@ class Document(QWebPage):  # {{{
 
     def switch_to_fullscreen_mode(self):
         self.in_fullscreen_mode = True
-        self.javascript('full_screen.on(%d, %s)'%(self.max_fs_width,
+        self.javascript('full_screen.on(%d, %d, %s)'%(self.max_fs_width, self.max_fs_height,
             'true' if self.in_paged_mode else 'false'))
 
     def switch_to_window_mode(self):
@@ -353,6 +360,8 @@ class Document(QWebPage):  # {{{
             return ans[0] if ans[1] else 0.0
         if typ == 'string':
             return unicode(ans.toString())
+        if typ in {bool, 'bool'}:
+            return ans.toBool()
         return ans
 
     def javaScriptConsoleMessage(self, msg, lineno, msgid):
@@ -505,11 +514,10 @@ class DocumentView(QWebView):  # {{{
         self._ignore_scrollbar_signals = False
         self.loading_url = None
         self.loadFinished.connect(self.load_finished)
-        self.connect(self.document, SIGNAL('linkClicked(QUrl)'), self.link_clicked)
-        self.connect(self.document, SIGNAL('linkHovered(QString,QString,QString)'), self.link_hovered)
-        self.connect(self.document, SIGNAL('selectionChanged()'), self.selection_changed)
-        self.connect(self.document, SIGNAL('animated_scroll_done()'),
-                self.animated_scroll_done, Qt.QueuedConnection)
+        self.document.linkClicked.connect(self.link_clicked)
+        self.document.linkHovered.connect(self.link_hovered)
+        self.document.selectionChanged[()].connect(self.selection_changed)
+        self.document.animated_scroll_done_signal.connect(self.animated_scroll_done, type=Qt.QueuedConnection)
         self.document.page_turn.connect(self.page_turn_requested)
         copy_action = self.pageAction(self.document.Copy)
         copy_action.setIcon(QIcon(I('convert.png')))
@@ -747,7 +755,7 @@ class DocumentView(QWebView):  # {{{
     def set_manager(self, manager):
         self.manager = manager
         self.scrollbar = manager.horizontal_scrollbar
-        self.connect(self.scrollbar, SIGNAL('valueChanged(int)'), self.scroll_horizontally)
+        self.scrollbar.valueChanged[(int)].connect(self.scroll_horizontally)
 
     def scroll_horizontally(self, amount):
         self.document.scroll_to(y=self.document.ypos, x=amount)
@@ -1103,8 +1111,12 @@ class DocumentView(QWebView):  # {{{
         def fget(self):
             return self.zoomFactor()
         def fset(self, val):
+            oval = self.zoomFactor()
             self.setZoomFactor(val)
-            self.magnification_changed.emit(val)
+            if val != oval:
+                if self.document.in_paged_mode:
+                    self.document.update_contents_size_for_paged_mode()
+                self.magnification_changed.emit(val)
         return property(fget=fget, fset=fset)
 
     def magnify_fonts(self, amount=None):

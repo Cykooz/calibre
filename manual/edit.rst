@@ -226,6 +226,18 @@ You can also go to a specific line in the currently open editor via
     Remember, to harness the full power of search and replace, you will
     need to use regular expressions. See :ref:`regexptutorial`.
 
+Saved searches
+^^^^^^^^^^^^^^^
+
+You can save frequently used search/replace expressions and reuse them multiple times.
+To save a search simply right click in the Find box and select :guilabel:`Save current search`.
+
+You can bring up the dialog of saved searches via :guilabel:`Search->Saved
+Searches`. This will present you with a list of search and replace expressions
+that you can apply. You can even select multiple entries in the list by holding
+down the Ctrl Key while clicking so as to run multiple search and replace
+expressions in a single operation.
+
 Automated tools
 -------------------
 
@@ -484,11 +496,13 @@ Inserting special characters
 
 You can insert characters that are difficult to type by using the
 :guilabel:`Edit->Insert special character` tool. This shows you all unicode
-characters, simply click in the character you want to type. If you hold Ctrl
+characters, simply click on the character you want to type. If you hold Ctrl
 while clicking, the window will close itself after inserting the selected
-character.
+character. This tool can be used to insert special characters into the main
+text or into any other area of the user interface, such as the Search and
+replace tool.
 
-Because there are a lot of character, you can define your own "Favorites"
+Because there are a lot of characters, you can define your own :guilabel:`Favorite`
 characters, that will be shown first. Simply right click on a character to mark
 it as favorite. You can also right click on a character in favorites to remove
 it from favorites. Finally, you can re-arrange the order of characters in
@@ -502,6 +516,10 @@ into the corresponding character. For example, to type ÿ you would type ff and
 then Alt+X. To type a non-breaking space you would use a0 and then
 :guilabel:`Alt+X`, to type the horizontal ellipsis you would use 2026 and
 :guilabel:`Alt+X` and so on.
+
+Finally, you can type in special characters by using HTML named entities. For
+example, typing &nbsp; will be replaced by a non breaking space when you type the
+semi-colon. The replacement happens only when typing the semi-colon.
 
 The code inspector view
 ^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -524,3 +542,13 @@ This tool allows you to automatically move all files into sub-folders based on
 their types. Access it via :guilabel:`Tools->Arrange into folders`. Note that
 this tool only changes how the files are arranged inside the EPUB, it does not
 change how they are displayed in the Files Browser.
+
+Importing files in other e-book formats as EPUB
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The editor includes the ability to import files in some other e-book formats
+directly as a new EPUB, without going through a full conversion. This is
+particularly useful to directly create EPUB files from your own hand-edited
+HTML files. You can do this via :guilabel:`File->Import an HTML or DOCX file as
+a new book`.
+

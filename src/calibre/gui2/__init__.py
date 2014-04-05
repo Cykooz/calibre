@@ -4,7 +4,7 @@ __copyright__ = '2008, Kovid Goyal <kovid at kovidgoyal.net>'
 import os, sys, Queue, threading, glob
 from threading import RLock
 from urllib import unquote
-from PyQt4.Qt import (QVariant, QFileInfo, QObject, SIGNAL, QBuffer, Qt,
+from PyQt4.Qt import (QVariant, QFileInfo, QObject, QBuffer, Qt,
                     QByteArray, QTranslator, QCoreApplication, QThread,
                     QEvent, QTimer, pyqtSignal, QDateTime, QDesktopServices,
                     QFileDialog, QFileIconProvider, QSettings, QColor,
@@ -123,6 +123,7 @@ defs['cover_grid_texture'] = None
 defs['show_vl_tabs'] = False
 defs['show_highlight_toggle_button'] = False
 defs['add_comments_to_email'] = False
+defs['cb_preserve_aspect_ratio'] = False
 del defs
 # }}}
 
@@ -441,20 +442,21 @@ class GetMetadata(QObject):
     GUI thread. Must be instantiated in the GUI thread.
     '''
 
+    edispatch = pyqtSignal(object, object, object)
+    idispatch = pyqtSignal(object, object, object)
+    metadataf = pyqtSignal(object, object)
+    metadata  = pyqtSignal(object, object)
+
     def __init__(self):
         QObject.__init__(self)
-        self.connect(self, SIGNAL('edispatch(PyQt_PyObject, PyQt_PyObject, PyQt_PyObject)'),
-                     self._get_metadata, Qt.QueuedConnection)
-        self.connect(self, SIGNAL('idispatch(PyQt_PyObject, PyQt_PyObject, PyQt_PyObject)'),
-                     self._from_formats, Qt.QueuedConnection)
+        self.edispatch.connect(self._get_metadata, type=Qt.QueuedConnection)
+        self.idispatch.connect(self._from_formats, type=Qt.QueuedConnection)
 
     def __call__(self, id, *args, **kwargs):
-        self.emit(SIGNAL('edispatch(PyQt_PyObject, PyQt_PyObject, PyQt_PyObject)'),
-                  id, args, kwargs)
+        self.edispatch.emit(id, args, kwargs)
 
     def from_formats(self, id, *args, **kwargs):
-        self.emit(SIGNAL('idispatch(PyQt_PyObject, PyQt_PyObject, PyQt_PyObject)'),
-                  id, args, kwargs)
+        self.idispatch.emit(id, args, kwargs)
 
     def _from_formats(self, id, args, kwargs):
         from calibre.ebooks.metadata.meta import metadata_from_formats
@@ -462,7 +464,7 @@ class GetMetadata(QObject):
             mi = metadata_from_formats(*args, **kwargs)
         except:
             mi = MetaInformation('', [_('Unknown')])
-        self.emit(SIGNAL('metadataf(PyQt_PyObject, PyQt_PyObject)'), id, mi)
+        self.metadataf.emit(id, mi)
 
     def _get_metadata(self, id, args, kwargs):
         from calibre.ebooks.metadata.meta import get_metadata
@@ -470,7 +472,7 @@ class GetMetadata(QObject):
             mi = get_metadata(*args, **kwargs)
         except:
             mi = MetaInformation('', [_('Unknown')])
-        self.emit(SIGNAL('metadata(PyQt_PyObject, PyQt_PyObject)'), id, mi)
+        self.metadata.emit(id, mi)
 
 class FileIconProvider(QFileIconProvider):
 
@@ -605,7 +607,8 @@ class FileDialog(QObject):
                        name='',
                        mode=QFileDialog.ExistingFiles,
                        default_dir='~',
-                       no_save_dir=False
+                       no_save_dir=False,
+                       combine_file_and_saved_dir=False
                        ):
         QObject.__init__(self)
         ftext = ''
@@ -624,14 +627,25 @@ class FileDialog(QObject):
         self.selected_files = None
         self.fd = None
 
-        if no_save_dir:
+        if combine_file_and_saved_dir:
+            bn = os.path.basename(default_dir)
+            prev = dynamic.get(self.dialog_name,
+                    os.path.expanduser(u'~'))
+            if os.path.exists(prev):
+                if os.path.isfile(prev):
+                    prev = os.path.dirname(prev)
+            else:
+                prev = os.path.expanduser(u'~')
+            initial_dir = os.path.join(prev, bn)
+        elif no_save_dir:
             initial_dir = os.path.expanduser(default_dir)
         else:
             initial_dir = dynamic.get(self.dialog_name,
                     os.path.expanduser(default_dir))
         if not isinstance(initial_dir, basestring):
             initial_dir = os.path.expanduser(default_dir)
-        if not initial_dir or not os.path.exists(initial_dir):
+        if not initial_dir or (not os.path.exists(initial_dir) and not (
+                mode == QFileDialog.AnyFile and (no_save_dir or combine_file_and_saved_dir))):
             initial_dir = select_initial_dir(initial_dir)
         self.selected_files = []
         use_native_dialog = 'CALIBRE_NO_NATIVE_FILEDIALOGS' not in os.environ
@@ -722,7 +736,7 @@ def choose_files(window, name, title,
         return fd.get_files()
     return None
 
-def choose_save_file(window, name, title, filters=[], all_files=True, initial_dir=None):
+def choose_save_file(window, name, title, filters=[], all_files=True, initial_path=None, initial_filename=None):
     '''
     Ask user to choose a file to save to. Can be a non-existent file.
     :param filters: list of allowable extensions. Each element of the list
@@ -730,12 +744,17 @@ def choose_save_file(window, name, title, filters=[], all_files=True, initial_di
                      the type of files to be filtered and second element a list
                      of extensions.
     :param all_files: If True add All files to filters.
+    :param initial_path: The initially selected path (does not need to exist). Cannot be used with initial_filename.
+    :param initial_filename: If specified, the initially selected path is this filename in the previously used directory. Cannot be used with initial_path.
     '''
     kwargs = dict(title=title, name=name, filters=filters,
                     parent=window, add_all_files_filter=all_files, mode=QFileDialog.AnyFile)
-    if initial_dir is not None:
+    if initial_path is not None:
         kwargs['no_save_dir'] = True
-        kwargs['default_dir'] = initial_dir
+        kwargs['default_dir'] = initial_path
+    elif initial_filename is not None:
+        kwargs['combine_file_and_saved_dir'] = True
+        kwargs['default_dir'] = initial_filename
     fd = FileDialog(**kwargs)
     fd.setParent(None)
     ans = None

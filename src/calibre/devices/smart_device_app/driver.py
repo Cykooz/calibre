@@ -226,7 +226,7 @@ class SMART_DEVICE_APP(DeviceConfig, DevicePlugin):
 
     PURGE_CACHE_ENTRIES_DAYS    = 30
 
-    CURRENT_CC_VERSION          = 64
+    CURRENT_CC_VERSION          = 77
 
     ZEROCONF_CLIENT_STRING      = b'calibre wireless device client'
 
@@ -263,6 +263,7 @@ class SMART_DEVICE_APP(DeviceConfig, DevicePlugin):
 
     MESSAGE_PASSWORD_ERROR = 1
     MESSAGE_UPDATE_NEEDED  = 2
+    MESSAGE_SHOW_TOAST     = 3
 
     ALL_BY_TITLE     = _('All by title')
     ALL_BY_AUTHOR    = _('All by author')
@@ -512,9 +513,10 @@ class SMART_DEVICE_APP(DeviceConfig, DevicePlugin):
                 series = v.get('series', None)
                 if series:
                     tsorder = tweaks['save_template_title_series_sorting']
-                    series = title_sort(v.get('series', ''), order=tsorder)
+                    series = title_sort(series, order=tsorder)
                 else:
                     series = ''
+                self._debug('series sort = ', series)
                 res[k]['_series_sort_'] = series
             else:
                 res[k] = v
@@ -572,6 +574,9 @@ class SMART_DEVICE_APP(DeviceConfig, DevicePlugin):
                     raise
                 time.sleep(0.1)  # lets not hammer the OS too hard
 
+    # This must be protected by a lock because it is called from the GUI thread
+    # (the sync stuff) and the device manager thread
+    @synchronous('sync_lock')
     def _call_client(self, op, arg, print_debug_info=True, wait_for_response=True):
         if op != 'NOOP':
             self.noop_counter = 0
@@ -687,8 +692,8 @@ class SMART_DEVICE_APP(DeviceConfig, DevicePlugin):
             return None
 
     def _metadata_in_cache(self, uuid, ext_or_lpath, lastmod):
+        from calibre.utils.date import now, parse_date
         try:
-            from calibre.utils.date import parse_date, now
             key = self._make_metadata_cache_key(uuid, ext_or_lpath)
             if isinstance(lastmod, unicode):
                 if lastmod == 'None':
@@ -788,8 +793,8 @@ class SMART_DEVICE_APP(DeviceConfig, DevicePlugin):
                 traceback.print_exc()
 
     def _write_metadata_cache(self):
-        self._debug()
         from calibre.utils.date import now
+        self._debug()
         from calibre.utils.config import to_json
         cache_file_name = os.path.join(cache_dir(),
                            'wireless_device_' + self.device_uuid +
@@ -983,7 +988,8 @@ class SMART_DEVICE_APP(DeviceConfig, DevicePlugin):
                     'currentLibraryUUID': library_uuid,
                     'pubdateFormat': tweaks['gui_pubdate_display_format'],
                     'timestampFormat': tweaks['gui_timestamp_display_format'],
-                    'lastModifiedFormat': tweaks['gui_last_modified_display_format']})
+                    'lastModifiedFormat': tweaks['gui_last_modified_display_format'],
+                    'calibre_version': numeric_version})
             if opcode != 'OK':
                 # Something wrong with the return. Close the socket
                 # and continue.
@@ -1078,6 +1084,12 @@ class SMART_DEVICE_APP(DeviceConfig, DevicePlugin):
                 self._debug('cover width', self.THUMBNAIL_WIDTH)
             elif hasattr(self, 'THUMBNAIL_WIDTH'):
                     delattr(self, 'THUMBNAIL_WIDTH')
+
+            self.is_read_sync_col = result.get('isReadSyncCol', None)
+            self._debug('Device is_read sync col', self.is_read_sync_col)
+
+            self.is_read_date_sync_col = result.get('isReadDateSyncCol', None)
+            self._debug('Device is_read_date sync col', self.is_read_date_sync_col)
 
             if password:
                 returned_hash = result.get('passwordHash', None)
@@ -1195,7 +1207,9 @@ class SMART_DEVICE_APP(DeviceConfig, DevicePlugin):
         opcode, result = self._call_client('GET_BOOK_COUNT',
                             {'canStream':True,
                              'canScan':True,
-                             'willUseCachedMetadata': self.client_can_use_metadata_cache})
+                             'willUseCachedMetadata': self.client_can_use_metadata_cache,
+                             'supportsSync': (bool(self.is_read_sync_col) or
+                                              bool(self.is_read_date_sync_col))})
         bl = CollectionsBookList(None, self.PREFIX, self.settings)
         if opcode == 'OK':
             count = result['count']
@@ -1209,6 +1223,7 @@ class SMART_DEVICE_APP(DeviceConfig, DevicePlugin):
                     books_on_device.append(result)
 
                 books_to_send = []
+                lpaths_on_device = set()
                 for r in books_on_device:
                     if r.get('lpath', None):
                         book = self._metadata_in_cache(r['uuid'], r['lpath'],
@@ -1217,9 +1232,30 @@ class SMART_DEVICE_APP(DeviceConfig, DevicePlugin):
                         book = self._metadata_in_cache(r['uuid'], r['extension'],
                                                        r['last_modified'])
                     if book:
+                        if self.client_cache_uses_lpaths:
+                            lpaths_on_device.add(r.get('lpath'))
                         bl.add_book(book, replace_metadata=True)
+                        book.set('_is_read_', r.get('_is_read_', None))
+                        book.set('_sync_type_', r.get('_sync_type_', None))
+                        book.set('_last_read_date_', r.get('_last_read_date_', None))
                     else:
                         books_to_send.append(r['priKey'])
+
+                count_of_cache_items_deleted = 0
+                if self.client_cache_uses_lpaths:
+                    for lpath in self.known_metadata.keys():
+                        if lpath not in lpaths_on_device:
+                            try:
+                                uuid = self.known_metadata[lpath].get('uuid', None)
+                                if uuid is not None:
+                                    key = self._make_metadata_cache_key(uuid, lpath)
+                                    self.device_book_cache.pop(key, None)
+                                    self.known_metadata.pop(lpath, None)
+                                    count_of_cache_items_deleted += 1
+                            except:
+                                self._debug('Exception while deleting book from caches', lpath)
+                                traceback.print_exc()
+                    self._debug('removed', count_of_cache_items_deleted, 'books from caches')
 
                 count = len(books_to_send)
                 self._debug('caching. Need count from device', count)
@@ -1238,6 +1274,9 @@ class SMART_DEVICE_APP(DeviceConfig, DevicePlugin):
                     if '_series_sort_' in result:
                         del result['_series_sort_']
                     book = self.json_codec.raw_to_book(result, SDBook, self.PREFIX)
+                    book.set('_is_read_', result.get('_is_read_', None))
+                    book.set('_sync_type_', result.get('_sync_type_', None))
+                    book.set('_last_read_date_', result.get('_last_read_date_', None))
                     bl.add_book(book, replace_metadata=True)
                     if '_new_book_' in result:
                         book.set('_new_book_', True)
@@ -1281,13 +1320,16 @@ class SMART_DEVICE_APP(DeviceConfig, DevicePlugin):
         # given back by "books", and one that has been plugboarded.
         books_to_send = []
         for book in booklists[0]:
-            if not self._metadata_already_on_device(book):
+            if (book.get('_force_send_metadata_', None) or
+                    not self._metadata_already_on_device(book)):
                 books_to_send.append(book)
 
         count = len(books_to_send)
         self._call_client('SEND_BOOKLISTS', {'count': count,
                      'collections': coldict,
-                     'willStreamMetadata': True},
+                     'willStreamMetadata': True,
+                     'supportsSync': (bool(self.is_read_sync_col) or
+                                      bool(self.is_read_date_sync_col))},
                      wait_for_response=False)
 
         if count:
@@ -1296,7 +1338,9 @@ class SMART_DEVICE_APP(DeviceConfig, DevicePlugin):
                 self._set_known_metadata(book)
                 opcode, result = self._call_client(
                         'SEND_BOOK_METADATA',
-                        {'index': i, 'count': count, 'data': book},
+                        {'index': i, 'count': count, 'data': book,
+                         'supportsSync': (bool(self.is_read_sync_col) or
+                                          bool(self.is_read_date_sync_col))},
                         print_debug_info=False,
                         wait_for_response=False)
 
@@ -1443,6 +1487,183 @@ class SMART_DEVICE_APP(DeviceConfig, DevicePlugin):
         device_prefs.set_overrides(manage_device_metadata='on_connect')
 
     @synchronous('sync_lock')
+    def synchronize_with_db(self, db, id_, book):
+        from calibre.utils.date import parse_date, is_date_undefined
+        def show_message(message):
+            self._call_client("DISPLAY_MESSAGE",
+                    {'messageKind': self.MESSAGE_SHOW_TOAST,
+                     'message': message})
+
+        if self.have_bad_sync_columns or not (self.is_read_sync_col or
+                                              self.is_read_date_sync_col):
+            # Not syncing or sync columns are invalid
+            return None
+
+        # Check the validity of the columns once per connection. We do it
+        # here because we have access to the db to get field_metadata
+        if not self.have_checked_sync_columns:
+            fm = db.field_metadata.custom_field_metadata()
+            if self.is_read_sync_col:
+                if self.is_read_sync_col not in fm:
+                    self._debug('is_read_sync_col not in field_metadata')
+                    show_message(_("The read sync column %s is "
+                             "not in calibre's library")%self.is_read_sync_col)
+                    self.have_bad_sync_columns = True
+                elif fm[self.is_read_sync_col]['datatype'] != 'bool':
+                    self._debug('is_read_sync_col not bool type')
+                    show_message(_("The read sync column %s is "
+                             "not a Yes/No column")%self.is_read_sync_col)
+                    self.have_bad_sync_columns = True
+
+            if self.is_read_date_sync_col:
+                if self.is_read_date_sync_col not in fm:
+                    self._debug('is_read_date_sync_col not in field_metadata')
+                    show_message(_("The read date sync column %s is "
+                             "not in calibre's library")%self.is_read_date_sync_col)
+                    self.have_bad_sync_columns = True
+                elif fm[self.is_read_date_sync_col]['datatype'] != 'datetime':
+                    self._debug('is_read_date_sync_col not date type')
+                    show_message(_("The read date sync column %s is "
+                             "not a Date column")%self.is_read_date_sync_col)
+                    self.have_bad_sync_columns = True
+
+            self.have_checked_sync_columns = True
+            if self.have_bad_sync_columns:
+                return None
+
+        sync_type = book.get('_sync_type_', None);
+        # We need to check if our attributes are in the book. If they are not
+        # then this is metadata coming from calibre to the device for the first
+        # time, in which case we must not sync it.
+        if hasattr(book, '_is_read_'):
+            is_read = book.get('_is_read_', None)
+            has_is_read = True
+        else:
+            has_is_read = False
+
+        if hasattr(book, '_last_read_date_'):
+            # parse_date returns UNDEFINED_DATE if the value is None
+            is_read_date = parse_date(book.get('_last_read_date_', None));
+            if is_date_undefined(is_read_date):
+                is_read_date = None
+            has_is_read_date = True
+        else:
+            has_is_read_date = False
+
+        force_return_changed_books = False
+        changed_books = set()
+
+        if sync_type == 3:
+            # The book metadata was built by the device from metadata in the
+            # book file itself. It must not be synced, because the metadata is
+            # almost surely wrong. However, the fact that we got here means that
+            # book matching has succeeded. Arrange that calibre's metadata is
+            # sent back to the device. This isn't strictly necessary as sending
+            # back the info will be arranged in other ways.
+            self._debug('Book with device-generated metadata', book.get('title', 'huh?'))
+            book.set('_force_send_metadata_', True)
+            force_return_changed_books = True
+        elif sync_type == 2:
+            # This is a special case where the user just set a sync column. In
+            # this case the device value wins if it is not None, otherwise the
+            # calibre value wins.
+
+            # Check is_read
+            if has_is_read and self.is_read_sync_col:
+                try:
+                    calibre_val = db.new_api.field_for(self.is_read_sync_col,
+                                                       id_, default_value=None)
+                    if is_read is not None:
+                        # The CC value wins. Check if it is different from calibre's
+                        # value to avoid updating the db to the same value
+                        if is_read != calibre_val:
+                            self._debug('special update calibre to is_read',
+                                    book.get('title', 'huh?'), 'to', is_read, calibre_val)
+                            changed_books = db.new_api.set_field(self.is_read_sync_col,
+                                                                 {id_: is_read})
+                    elif calibre_val is not None:
+                        # Calibre value wins. Force the metadata for the
+                        # book to be sent to the device even if the mod
+                        # dates haven't changed.
+                        self._debug('special update is_read to calibre value',
+                                    book.get('title', 'huh?'), 'to', calibre_val)
+                        book.set('_force_send_metadata_', True)
+                        force_return_changed_books = True
+                except:
+                    self._debug('exception special syncing is_read', self.is_read_sync_col)
+                    traceback.print_exc()
+
+            # Check is_read_date.
+            if has_is_read_date and self.is_read_date_sync_col:
+                try:
+                    # The db method returns None for undefined dates.
+                    calibre_val = db.new_api.field_for(self.is_read_date_sync_col,
+                                                           id_, default_value=None)
+                    if is_read_date is not None:
+                        if is_read_date != calibre_val:
+                            self._debug('special update calibre to is_read_date',
+                                book.get('title', 'huh?'), 'to', is_read_date, calibre_val)
+                            changed_books |= db.new_api.set_field(self.is_read_date_sync_col,
+                                                                 {id_: is_read_date})
+                    elif calibre_val is not None:
+                        self._debug('special update is_read_date to calibre value',
+                                    book.get('title', 'huh?'), 'to', calibre_val)
+                        book.set('_force_send_metadata_', True)
+                        force_return_changed_books = True
+                except:
+                    self._debug('exception special syncing is_read_date',
+                                self.is_read_sync_col)
+                    traceback.print_exc()
+        else:
+            # This is the standard sync case. If the CC value has changed, it
+            # wins, otherwise the calibre value is synced to CC in the normal
+            # fashion (mod date)
+            if has_is_read and self.is_read_sync_col:
+                try:
+                    orig_is_read = book.get(self.is_read_sync_col, None)
+                    if is_read != orig_is_read:
+                        # The value in the device's is_read checkbox is not the
+                        # same as the last one that came to the device from
+                        # calibre during the last connect, meaning that the user
+                        # changed it. Write the one from the device to calibre's
+                        # db.
+                        self._debug('standard update is_read', book.get('title', 'huh?'),
+                                    'to', is_read, 'was', orig_is_read)
+                        changed_books = db.new_api.set_field(self.is_read_sync_col,
+                                                                 {id_: is_read})
+                except:
+                    self._debug('exception standard syncing is_read', self.is_read_sync_col)
+                    traceback.print_exc()
+
+            if has_is_read_date and self.is_read_date_sync_col:
+                try:
+                    orig_is_read_date = book.get(self.is_read_date_sync_col, None)
+                    if is_date_undefined(orig_is_read_date):
+                        orig_is_read_date = None
+
+                    if is_read_date != orig_is_read_date:
+                        self._debug('standard update is_read_date', book.get('title', 'huh?'),
+                                    'to', is_read_date, 'was', orig_is_read_date)
+                        changed_books |= db.new_api.set_field(self.is_read_date_sync_col,
+                                                          {id_: is_read_date})
+                except:
+                    self._debug('Exception standard syncing is_read_date',
+                                self.is_read_date_sync_col)
+                    traceback.print_exc()
+
+        if changed_books or force_return_changed_books:
+            # One of the two values was synced, giving a (perhaps empty) list of
+            # changed books. Return that.
+            return changed_books
+
+        # Nothing was synced. The user might have changed the value in calibre.
+        # If so, that value will be sent to the device in the normal way. Note
+        # that because any updated value has already been synced and so will
+        # also be sent, the device should put the calibre value into its
+        # checkbox (or whatever it uses)
+        return None
+
+    @synchronous('sync_lock')
     def startup(self):
         self.listen_socket = None
 
@@ -1465,6 +1686,10 @@ class SMART_DEVICE_APP(DeviceConfig, DevicePlugin):
         self.noop_counter = 0
         self.connection_attempts = {}
         self.client_wants_uuid_file_names = False
+        self.is_read_sync_col = None
+        self.is_read_date_sync_col = None
+        self.have_checked_sync_columns = False
+        self.have_bad_sync_columns = False
 
         message = None
         compression_quality_ok = True
@@ -1573,6 +1798,7 @@ class SMART_DEVICE_APP(DeviceConfig, DevicePlugin):
 
     @synchronous('sync_lock')
     def shutdown(self):
+        self._close_device_socket()
         if getattr(self, 'listen_socket', None) is not None:
             self.connection_listener.stop()
             try:

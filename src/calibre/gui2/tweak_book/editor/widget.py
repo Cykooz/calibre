@@ -7,13 +7,14 @@ __license__ = 'GPL v3'
 __copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
 
 import unicodedata
+from functools import partial
 
 from PyQt4.Qt import (
     QMainWindow, Qt, QApplication, pyqtSignal, QMenu, qDrawShadeRect, QPainter,
     QImage, QColor, QIcon, QPixmap, QToolButton)
 
 from calibre.gui2 import error_dialog
-from calibre.gui2.tweak_book import actions, current_container
+from calibre.gui2.tweak_book import actions, current_container, tprefs
 from calibre.gui2.tweak_book.editor.text import TextEdit
 
 def create_icon(text, palette=None, sz=32, divider=2):
@@ -56,11 +57,18 @@ def register_text_editor_actions(reg, palette):
     ac = reg('view-image', _('&Insert image'), ('insert_resource', 'image'), 'insert-image', (), _('Insert an image into the text'))
     ac.setToolTip(_('<h3>Insert image</h3>Insert an image into the text'))
 
+    ac = reg('insert-link', _('Insert &hyperlink'), ('insert_hyperlink',), 'insert-hyperlink', (), _('Insert hyperlink'))
+    ac.setToolTip(_('<h3>Insert hyperlink</h3>Insert a hyperlink into the text'))
+
     for i, name in enumerate(('h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p')):
         text = ('&' + name) if name == 'p' else (name[0] + '&' + name[1])
         desc = _('Convert the paragraph to &lt;%s&gt;') % name
         ac = reg(create_icon(name), text, ('rename_block_tag', name), 'rename-block-tag-' + name, 'Ctrl+%d' % (i + 1), desc)
         ac.setToolTip(desc)
+
+    ac = reg('code', _('Insert &tag'), ('insert_tag',), 'insert-tag', ('Ctrl+<'), _('Insert tag'))
+    ac.setToolTip(_('<h3>Insert tag</h3>Insert a tag, if some text is selected the tag will be inserted around the selected text'))
+
 
 class Editor(QMainWindow):
 
@@ -141,6 +149,26 @@ class Editor(QMainWindow):
     def insert_image(self, href):
         self.editor.insert_image(href)
 
+    def insert_hyperlink(self, href, text):
+        self.editor.insert_hyperlink(href, text)
+
+    def _build_insert_tag_button_menu(self):
+        m = self.insert_tag_button.menu()
+        m.clear()
+        for name in tprefs['insert_tag_mru']:
+            m.addAction(name, partial(self.insert_tag, name))
+
+    def insert_tag(self, name):
+        self.editor.insert_tag(name)
+        mru = tprefs['insert_tag_mru']
+        try:
+            mru.remove(name)
+        except ValueError:
+            pass
+        mru.insert(0, name)
+        tprefs['insert_tag_mru'] = mru
+        self._build_insert_tag_button_menu()
+
     def undo(self):
         self.editor.undo()
 
@@ -150,6 +178,9 @@ class Editor(QMainWindow):
     @property
     def selected_text(self):
         return self.editor.selected_text
+
+    def get_smart_selection(self, update=True):
+        return self.editor.smarts.get_smart_selection(self.editor, update=update)
 
     # Search and replace {{{
     def mark_selected_text(self):
@@ -189,6 +220,7 @@ class Editor(QMainWindow):
         for x in ('cut', 'copy', 'paste'):
             b.addAction(actions['editor-%s' % x])
         self.tools_bar = b = self.addToolBar(_('Editor tools'))
+        b.setObjectName('tools_bar')
         if self.syntax == 'html':
             b.addAction(actions['fix-html-current'])
         if self.syntax in {'xml', 'html', 'css'}:
@@ -196,7 +228,19 @@ class Editor(QMainWindow):
         if self.syntax in {'html', 'css'}:
             b.addAction(actions['insert-image'])
         if self.syntax == 'html':
+            b.addAction(actions['insert-hyperlink'])
+        if self.syntax in {'xml', 'html'}:
+            b.addAction(actions['insert-tag'])
+            w = self.insert_tag_button = b.widgetForAction(actions['insert-tag'])
+            w.setPopupMode(QToolButton.MenuButtonPopup)
+            w.m = m = QMenu()
+            w.setMenu(m)
+            w.setContextMenuPolicy(Qt.CustomContextMenu)
+            w.customContextMenuRequested.connect(self.insert_tag_button.showMenu)
+            self._build_insert_tag_button_menu()
+        if self.syntax == 'html':
             self.format_bar = b = self.addToolBar(_('Format text'))
+            b.setObjectName('html_format_bar')
             for x in ('bold', 'italic', 'underline', 'strikethrough', 'subscript', 'superscript', 'color', 'background-color'):
                 b.addAction(actions['format-text-%s' % x])
             ac = b.addAction(QIcon(I('format-text-heading.png')), _('Change paragraph to heading'))
@@ -248,11 +292,12 @@ class Editor(QMainWindow):
     def cursor_position(self):
         c = self.editor.textCursor()
         char = ''
+        col = c.positionInBlock()
         if not c.atStart():
             c.clearSelection()
-            c.setPosition(c.position()-1, c.KeepAnchor)
+            c.movePosition(c.PreviousCharacter, c.KeepAnchor)
             char = unicode(c.selectedText()).rstrip('\0')
-        return (c.blockNumber() + 1, c.positionInBlock(), char)
+        return (c.blockNumber() + 1, col, char)
 
     def cut(self):
         self.editor.cut()
@@ -283,7 +328,10 @@ class Editor(QMainWindow):
         from calibre.ebooks.oeb.polish.pretty import pretty_html, pretty_css, pretty_xml
         if self.syntax in {'css', 'html', 'xml'}:
             func = {'css':pretty_css, 'xml':pretty_xml}.get(self.syntax, pretty_html)
-            self.editor.replace_text(func(current_container(), name, unicode(self.editor.toPlainText())).decode('utf-8'))
+            original_text = unicode(self.editor.toPlainText())
+            prettied_text = func(current_container(), name, original_text).decode('utf-8')
+            if original_text != prettied_text:
+                self.editor.replace_text(prettied_text)
             return True
         return False
 

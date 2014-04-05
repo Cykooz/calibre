@@ -1382,15 +1382,6 @@ class StoreChitankaStore(StoreBase):
     headquarters = 'BG'
     formats = ['FB2', 'EPUB', 'TXT', 'SFB']
 
-class StoreDieselEbooksStore(StoreBase):
-    name = 'Diesel eBooks'
-    description = u'Instant access to over 2.4 million titles from hundreds of publishers including Harlequin, HarperCollins, John Wiley & Sons, McGraw-Hill, Simon & Schuster and Random House.'  # noqa
-    actual_plugin = 'calibre.gui2.store.stores.diesel_ebooks_plugin:DieselEbooksStore'
-
-    headquarters = 'US'
-    formats = ['EPUB', 'PDF']
-    affiliate = True
-
 class StoreEbookNLStore(StoreBase):
     name = 'eBook.nl'
     description = u'De eBookwinkel van Nederland'
@@ -1438,15 +1429,6 @@ class StoreEbooksGratuitsStore(StoreBase):
 #     headquarters = 'UK'
 #     formats = ['EPUB', 'PDF']
 #     affiliate = True
-
-class StoreEHarlequinStore(StoreBase):
-    name = 'eHarlequin'
-    description = u'A global leader in series romance and one of the world\'s leading publishers of books for women. Offers women a broad range of reading from romance to bestseller fiction, from young adult novels to erotic literature, from nonfiction to fantasy, from African-American novels to inspirational romance, and more.'  # noqa
-    actual_plugin = 'calibre.gui2.store.stores.eharlequin_plugin:EHarlequinStore'
-
-    headquarters = 'CA'
-    formats = ['EPUB', 'PDF']
-    affiliate = True
 
 class StoreEKnigiStore(StoreBase):
     name = u'еКниги'
@@ -1729,12 +1711,10 @@ plugins += [
     StoreBiblioStore,
     StoreChitankaStore,
     StoreCdpStore,
-    StoreDieselEbooksStore,
     StoreEbookNLStore,
     StoreEbookpointStore,
     StoreEbookscomStore,
     StoreEbooksGratuitsStore,
-    StoreEHarlequinStore,
     StoreEKnigiStore,
     StoreEmpikStore,
     StoreFeedbooksStore,

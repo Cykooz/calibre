@@ -93,7 +93,7 @@ BLOCK_TAGS = frozenset(map(XHTML, (
     'div', 'dl', 'dt', 'fieldset', 'figcaption', 'figure', 'footer', 'form',
     'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'header', 'hgroup', 'hr', 'li',
     'noscript', 'ol', 'output', 'p', 'pre', 'script', 'section', 'style', 'table', 'tbody', 'td',
-    'tfoot', 'thead', 'tr', 'ul', 'video'))) | {SVG_TAG}
+    'tfoot', 'thead', 'tr', 'ul', 'video', 'img'))) | {SVG_TAG}
 
 
 def isblock(x):
@@ -118,9 +118,9 @@ def indent_for_tag(x):
     prev = x.getprevious()
     x = x.getparent().text if prev is None else prev.tail
     if not x:
-        return None
+        return ''
     s = x.rpartition('\n')[-1]
-    return s if isspace(s) else None
+    return s if isspace(s) else ''
 
 def set_indent(elem, attr, indent):
     x = getattr(elem, attr)

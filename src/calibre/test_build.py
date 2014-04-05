@@ -107,10 +107,15 @@ def test_unrar():
     test_basic()
     print ('Unrar OK!')
 
+def test_ssl():
+    import ssl
+    ssl
+    print ('SSL OK!')
+
 def test_icu():
-    from calibre.utils.icu import _icu_not_ok
-    if _icu_not_ok:
-        raise RuntimeError('ICU module not loaded/valid')
+    print ('Testing ICU')
+    from calibre.utils.icu_test import test_build
+    test_build()
     print ('ICU OK!')
 
 def test_wpd():
@@ -138,6 +143,7 @@ def test_magick():
 def test():
     test_plugins()
     test_lxml()
+    test_ssl()
     test_sqlite()
     test_imaging()
     test_unrar()

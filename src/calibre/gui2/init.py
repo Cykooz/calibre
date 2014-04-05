@@ -227,9 +227,9 @@ class StatusBar(QStatusBar):  # {{{
         self.device_string = ''
         self.set_label()
 
-    def show_message(self, msg, timeout=0):
+    def show_message(self, msg, timeout=0, show_notification=True):
         self.showMessage(msg, timeout)
-        if self.notifier is not None and not config['disable_tray_notification']:
+        if self.notifier is not None and not config['disable_tray_notification'] and show_notification:
             if isosx and isinstance(msg, unicode):
                 try:
                     msg = msg.encode(preferred_encoding)
@@ -315,7 +315,8 @@ class VLTabs(QTabBar):  # {{{
     def rebuild(self):
         self.currentChanged.disconnect(self.tab_changed)
         db = self.current_db
-        virt_libs = frozenset(db.prefs.get('virtual_libraries', {}))
+        vl_map = db.prefs.get('virtual_libraries', {})
+        virt_libs = frozenset(vl_map)
         hidden = frozenset(db.prefs['virt_libs_hidden'])
         if hidden - virt_libs:
             db.prefs['virt_libs_hidden'] = list(hidden.intersection(virt_libs))
@@ -327,7 +328,10 @@ class VLTabs(QTabBar):  # {{{
         virt_libs = (set(virt_libs) - hidden) | {''}
         order = {x:i for i, x in enumerate(order)}
         for i, vl in enumerate(sorted(virt_libs, key=lambda x:(order.get(x, 0), sort_key(x)))):
-            self.addTab(vl or _('All books'))
+            self.addTab(vl.replace('&', '&&') or _('All books'))
+            sexp = vl_map.get(vl, None)
+            if sexp is not None:
+                self.setTabToolTip(i, _('Search expression for this virtual library:') + '\n\n' + sexp)
             self.setTabData(i, vl)
             if vl == current_lib:
                 current_idx = i

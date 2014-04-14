@@ -14,7 +14,7 @@ device. This class handles device detection.
 import os, subprocess, time, re, sys, glob
 from itertools import repeat
 
-from calibre import prints, as_unicode, sanitize_file_name
+from calibre import prints, as_unicode, sanitize_file_name_unicode
 from calibre.devices.interface import DevicePlugin
 from calibre.devices.errors import DeviceError
 from calibre.devices.usbms.deviceconfig import DeviceConfig
@@ -1026,7 +1026,7 @@ class Device(DeviceConfig, DevicePlugin):
         settings = self.settings()
         sanitize = ascii_filename
         if self.SUPPORTS_NON_ENGLISH_CHARACTERS and not settings.asciiize:
-            sanitize = sanitize_file_name
+            sanitize = sanitize_file_name_unicode
         return sanitize(path)
 
     def filename_callback(self, default, mi):

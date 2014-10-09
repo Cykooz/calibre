@@ -13,10 +13,13 @@ Edit /etc/hosts and put in FQDN in the appropriate places, for example::
 
 echo "Asia/Kolkata" > /etc/timezone && dpkg-reconfigure -f noninteractive tzdata && ntpdate ntp.ubuntu.com
 apt-get update
-apt-get install vim nginx zsh python-lxml python-mechanize iotop htop smartmontools mosh git ntp vnstat vnstati
+apt-get install vim nginx zsh python-lxml python-mechanize iotop htop smartmontools mosh git ntp vnstat vnstati python-pyasn1 python-openssl
 chsh -s /bin/zsh
 mkdir -p /root/staging /root/work/vim /srv/download /srv/manual
-
+wget https://bootstrap.pypa.io/get-pip.py
+python get-pip.py
+apt-get remove requests
+pip install requests ndg-httpsclient
 Edit /etc/vnstat.conf and change the default interface to whatever the interface for
 the server is and change the max bandwidth to 1024
 
@@ -30,6 +33,9 @@ scp -r ~/work/vim/zsh-history-substring-search $server:work/vim
 cd /usr/local && git clone https://github.com/kovidgoyal/calibre.git
 echo '#!/bin/sh\ncd /usr/local/calibre && git pull -q' > /usr/local/bin/update-calibre && chmod +x /usr/local/bin/update-calibre
 
+Edit /etc/default/rcS and set
+FSCKFIX=yes
+
 Add the following to crontab::
     @hourly    /usr/bin/python /usr/local/calibre/setup/plugins_mirror.py
     @hourly    /usr/local/bin/update-calibre
@@ -37,7 +43,7 @@ Add the following to crontab::
 
 If the server has a backup hard-disk, mount it at /mnt/backup and edit /etc/fstab so that it is auto-mounted.
 Then, add the following to crontab::
-    @daily     /usr/bin/rsync -ha /srv /mnt/backup
+    @daily     /usr/bin/rsync -ha /srv /mnt/backup --exclude /srv/plugins/stats.log --exclude /srv/plugins/rotated-stats.log
     @daily     /usr/bin/rsync -ha /etc /mnt/backup
 
 Nginx
@@ -57,6 +63,6 @@ SSH into sourceforge and downloadbestsoftware so that their host keys are
 stored.
 
    ssh -oStrictHostKeyChecking=no files.calibre-ebook.com echo done (and whatever other mirrors are present)
-   ssh -oStrictHostKeyChecking=no kovid@mirror1.fosshub.com echo done
+   ssh -oStrictHostKeyChecking=no kovid@mirror10.fosshub.com echo done
    ssh -oStrictHostKeyChecking=no kovidgoyal,calibre@frs.sourceforge.net
 

@@ -7,7 +7,7 @@ __docformat__ = 'restructuredtext en'
 
 from functools import partial
 
-from PyQt4.Qt import (QComboBox, QLabel, QSpinBox, QDoubleSpinBox, QDateTimeEdit,
+from PyQt5.Qt import (QComboBox, QLabel, QSpinBox, QDoubleSpinBox, QDateTimeEdit,
         QDateTime, QGroupBox, QVBoxLayout, QSizePolicy, QGridLayout,
         QSpacerItem, QIcon, QCheckBox, QWidget, QHBoxLayout,
         QPushButton, QMessageBox, QToolButton, Qt)
@@ -31,22 +31,28 @@ class Base(object):
 
     def initialize(self, book_id):
         val = self.db.get_custom(book_id, num=self.col_id, index_is_id=True)
-        self.initial_val = val
         val = self.normalize_db_val(val)
         self.setter(val)
+        self.initial_val = self.current_val  # self.current_val might be different from val thanks to normalization
+
+    @property
+    def current_val(self):
+        return self.normalize_ui_val(self.gui_val)
 
     @property
     def gui_val(self):
         return self.getter()
 
     def commit(self, book_id, notify=False):
-        val = self.gui_val
-        val = self.normalize_ui_val(val)
+        val = self.current_val
         if val != self.initial_val:
             return self.db.set_custom(book_id, val, num=self.col_id,
                             notify=notify, commit=False, allow_case_change=True)
         else:
             return set()
+
+    def apply_to_metadata(self, mi):
+        mi.set('#' + self.col_metadata['label'], self.current_val)
 
     def normalize_db_val(self, val):
         return val
@@ -327,14 +333,15 @@ class Text(Base):
         self.widgets[1].update_items_cache(values)
         val = self.db.get_custom(book_id, num=self.col_id, index_is_id=True)
         if isinstance(val, list):
-            val.sort(key=sort_key)
-        self.initial_val = val
+            if not self.col_metadata.get('display', {}).get('is_names', False):
+                val.sort(key=sort_key)
         val = self.normalize_db_val(val)
 
         if self.col_metadata['is_multiple']:
             self.setter(val)
         else:
             self.widgets[1].show_initial_value(val)
+        self.initial_val = self.current_val
 
     def setter(self, val):
         if self.col_metadata['is_multiple']:
@@ -373,7 +380,7 @@ class Text(Base):
             if d == QMessageBox.Yes:
                 self.commit(self.book_id)
                 self.db.commit()
-                self.initial_val = self.getter()
+                self.initial_val = self.current_val
             else:
                 self.setter(self.initial_val)
         d = TagEditor(self.parent, self.db, self.book_id, self.key)
@@ -403,9 +410,7 @@ class Series(Base):
         values = list(self.db.all_custom(num=self.col_id))
         values.sort(key=sort_key)
         val = self.db.get_custom(book_id, num=self.col_id, index_is_id=True)
-        self.initial_val = val
         s_index = self.db.get_custom_extra(book_id, num=self.col_id, index_is_id=True)
-        self.initial_index = s_index
         try:
             s_index = float(s_index)
         except (ValueError, TypeError):
@@ -416,6 +421,7 @@ class Series(Base):
         self.name_widget.update_items_cache(values)
         self.name_widget.show_initial_value(val)
         self.name_widget.blockSignals(False)
+        self.initial_val, self.initial_index = self.current_val
 
     def getter(self):
         n = unicode(self.name_widget.currentText()).strip()
@@ -433,16 +439,25 @@ class Series(Base):
                                                      num=self.col_id)
         self.idx_widget.setValue(s_index)
 
-    def commit(self, book_id, notify=False):
+    @property
+    def current_val(self):
         val, s_index = self.gui_val
         val = self.normalize_ui_val(val)
+        return val, s_index
+
+    def commit(self, book_id, notify=False):
+        val, s_index = self.current_val
         if val != self.initial_val or s_index != self.initial_index:
-            if val == '':
+            if not val:
                 val = s_index = None
             return self.db.set_custom(book_id, val, extra=s_index, num=self.col_id,
                                notify=notify, commit=False, allow_case_change=True)
         else:
             return set()
+
+    def apply_to_metadata(self, mi):
+        val, s_index = self.current_val
+        mi.set('#' + self.col_metadata['label'], val, extra=s_index)
 
 class Enumeration(Base):
 
@@ -459,7 +474,6 @@ class Enumeration(Base):
     def initialize(self, book_id):
         val = self.db.get_custom(book_id, num=self.col_id, index_is_id=True)
         val = self.normalize_db_val(val)
-        self.initial_val = val
         idx = self.widgets[1].findText(val)
         if idx < 0:
             error_dialog(self.parent, '',
@@ -470,6 +484,7 @@ class Enumeration(Base):
 
             idx = 0
         self.widgets[1].setCurrentIndex(idx)
+        self.initial_val = self.current_val
 
     def setter(self, val):
         self.widgets[1].setCurrentIndex(self.widgets[1].findText(val))

@@ -11,7 +11,9 @@
             		<td class="cbj_title" colspan="2">{title}</td>
             	</tr>
                 <tr>
-                    <td  class="cbj_series" colspan="2">{series}</td>
+                    <!-- If you do not want the series number to be formatted using roman numerals
+                        change {series.roman} to {series} -->
+                    <td  class="cbj_series" colspan="2">{series.roman}</td>
                 </tr>
             	<tr>
             		<td class="cbj_author" colspan="2">{author}</td>
@@ -30,6 +32,8 @@
                 </tr>
                 <tr class="cbj_tags">
                     <td class="cbj_label">{tags_label}:</td>
+                    <!-- If you want the tags to be alphabetical, change {tags} to
+                        {tags.alphabetical} -->
                     <td class="cbj_content">{tags}</td>
                 </tr>
             </table>

@@ -10,12 +10,12 @@ import re, os, json, weakref
 from lxml import html
 import sip
 
-from PyQt4.Qt import (QApplication, QFontInfo, QSize, QWidget, QPlainTextEdit,
+from PyQt5.Qt import (QApplication, QFontInfo, QSize, QWidget, QPlainTextEdit,
     QToolBar, QVBoxLayout, QAction, QIcon, Qt, QTabWidget, QUrl, QFormLayout,
-    QSyntaxHighlighter, QColor, QChar, QColorDialog, QMenu, QDialog, QLabel,
+    QSyntaxHighlighter, QColor, QColorDialog, QMenu, QDialog, QLabel,
     QHBoxLayout, QKeySequence, QLineEdit, QDialogButtonBox, QPushButton,
     QCheckBox)
-from PyQt4.QtWebKit import QWebView, QWebPage
+from PyQt5.QtWebKitWidgets import QWebView, QWebPage
 
 from calibre.ebooks.chardet import xml_to_unicode
 from calibre import xml_replace_entities, prepare_string_for_xml
@@ -211,7 +211,7 @@ class EditorWidget(QWebView):  # {{{
             return
         url = self.parse_link(link)
         if url.isValid():
-            url = unicode(url.toString())
+            url = unicode(url.toString(QUrl.None))
             self.setFocus(Qt.OtherFocusReason)
             if is_image:
                 self.exec_command('insertHTML',
@@ -311,23 +311,6 @@ class EditorWidget(QWebView):  # {{{
         frame.evaluateJavaScript(js)
 
     def remove_format_cleanup(self):
-        # WebKit (the version in Qt 4.8.x at least) does not remove background
-        # colors, see https://bugs.webkit.org/show_bug.cgi?id=101682
-        self.page().mainFrame().evaluateJavaScript(
-            '''
-            var sel = window.getSelection();
-            if (sel.rangeCount >= 1) {
-                var node = sel.getRangeAt(0).commonAncestorContainer;
-                if (node.style.backgroundColor && node.style.backgroundColor != 'transparent') node.style.backgroundColor = 'transparent';
-                var descendants = node.getElementsByTagName('*');
-                for (var i = 0; i < descendants.length; i++) {
-                    var s = descendants[i].style;
-                    if (s.backgroundColor && s.backgroundColor != 'transparent')
-                        s.backgroundColor = 'transparent';
-                }
-        }
-
-        ''')
         self.html = self.html
 
     @dynamic_property
@@ -376,6 +359,15 @@ class EditorWidget(QWebView):  # {{{
             self.setHtml(val)
             self.set_font_style()
         return property(fget=fget, fset=fset)
+
+    def set_html(self, val, allow_undo=True):
+        if not allow_undo or self.readonly:
+            self.html = val
+            return
+        mf = self.page().mainFrame()
+        mf.evaluateJavaScript('document.execCommand("selectAll", false, null)')
+        mf.evaluateJavaScript('document.execCommand("insertHTML", false, %s)' % json.dumps(unicode(val)))
+        self.set_font_style()
 
     def set_font_style(self):
         fi = QFontInfo(QApplication.font(self))
@@ -443,7 +435,7 @@ class Highlighter(QSyntaxHighlighter):
 
     def highlightBlock(self, text):
         state = self.previousBlockState()
-        len_ = text.length()
+        len_ = len(text)
         start = 0
         pos = 0
 
@@ -452,7 +444,7 @@ class Highlighter(QSyntaxHighlighter):
             if state == State_Comment:
                 start = pos
                 while pos < len_:
-                    if text.mid(pos, 3) == "-->":
+                    if text[pos:pos+3] == u"-->":
                         pos += 3
                         state = State_Text
                         break
@@ -463,9 +455,9 @@ class Highlighter(QSyntaxHighlighter):
             elif state == State_DocType:
                 start = pos
                 while pos < len_:
-                    ch = text.at(pos)
+                    ch = text[pos]
                     pos += 1
-                    if ch == QChar('>'):
+                    if ch == u'>':
                         state = State_Text
                         break
                 self.setFormat(start, pos - start, self.colors['doctype'])
@@ -474,12 +466,12 @@ class Highlighter(QSyntaxHighlighter):
             elif state == State_TagStart:
                 start = pos + 1
                 while pos < len_:
-                    ch = text.at(pos)
+                    ch = text[pos]
                     pos += 1
-                    if ch == QChar('>'):
+                    if ch == u'>':
                         state = State_Text
                         break
-                    if not ch.isSpace():
+                    if not ch.isspace():
                         pos -= 1
                         state = State_TagName
                         break
@@ -488,13 +480,13 @@ class Highlighter(QSyntaxHighlighter):
             elif state == State_TagName:
                 start = pos
                 while pos < len_:
-                    ch = text.at(pos)
+                    ch = text[pos]
                     pos += 1
-                    if ch.isSpace():
+                    if ch.isspace():
                         pos -= 1
                         state = State_InsideTag
                         break
-                    if ch == QChar('>'):
+                    if ch == u'>':
                         state = State_Text
                         break
                 self.setFormat(start, pos - start, self.colors['tag'])
@@ -504,17 +496,17 @@ class Highlighter(QSyntaxHighlighter):
                 start = pos
 
                 while pos < len_:
-                    ch = text.at(pos)
+                    ch = text[pos]
                     pos += 1
 
-                    if ch == QChar('/'):
+                    if ch == u'/':
                         continue
 
-                    if ch == QChar('>'):
+                    if ch == u'>':
                         state = State_Text
                         break
 
-                    if not ch.isSpace():
+                    if not ch.isspace():
                         pos -= 1
                         state = State_AttributeName
                         break
@@ -524,14 +516,14 @@ class Highlighter(QSyntaxHighlighter):
                 start = pos
 
                 while pos < len_:
-                    ch = text.at(pos)
+                    ch = text[pos]
                     pos += 1
 
-                    if ch == QChar('='):
+                    if ch == u'=':
                         state = State_AttributeValue
                         break
 
-                    if ch in (QChar('>'), QChar('/')):
+                    if ch in (u'>', u'/'):
                         state = State_InsideTag
                         break
 
@@ -543,20 +535,20 @@ class Highlighter(QSyntaxHighlighter):
 
                 # find first non-space character
                 while pos < len_:
-                    ch = text.at(pos)
+                    ch = text[pos]
                     pos += 1
 
                     # handle opening single quote
-                    if ch == QChar("'"):
+                    if ch == u"'":
                         state = State_SingleQuote
                         break
 
                     # handle opening double quote
-                    if ch == QChar('"'):
+                    if ch == u'"':
                         state = State_DoubleQuote
                         break
 
-                    if not ch.isSpace():
+                    if not ch.isspace():
                         break
 
                 if state == State_AttributeValue:
@@ -564,10 +556,10 @@ class Highlighter(QSyntaxHighlighter):
                     # just stop at non-space or tag delimiter
                     start = pos
                     while pos < len_:
-                        ch = text.at(pos)
-                        if ch.isSpace():
+                        ch = text[pos]
+                        if ch.isspace():
                             break
-                        if ch in (QChar('>'), QChar('/')):
+                        if ch in (u'>', u'/'):
                             break
                         pos += 1
                     state = State_InsideTag
@@ -578,9 +570,9 @@ class Highlighter(QSyntaxHighlighter):
                 start = pos
 
                 while pos < len_:
-                    ch = text.at(pos)
+                    ch = text[pos]
                     pos += 1
-                    if ch == QChar("'"):
+                    if ch == u"'":
                         break
 
                 state = State_InsideTag
@@ -592,9 +584,9 @@ class Highlighter(QSyntaxHighlighter):
                 start = pos
 
                 while pos < len_:
-                    ch = text.at(pos)
+                    ch = text[pos]
                     pos += 1
-                    if ch == QChar('"'):
+                    if ch == u'"':
                         break
 
                 state = State_InsideTag
@@ -604,19 +596,19 @@ class Highlighter(QSyntaxHighlighter):
             else:
                 # State_Text and default
                 while pos < len_:
-                    ch = text.at(pos)
-                    if ch == QChar('<'):
-                        if text.mid(pos, 4) == "<!--":
+                    ch = text[pos]
+                    if ch == u'<':
+                        if text[pos:pos+4] == u"<!--":
                             state = State_Comment
                         else:
-                            if text.mid(pos, 9).toUpper() == "<!DOCTYPE":
+                            if text[pos:pos+9].upper() == u"<!DOCTYPE":
                                 state = State_DocType
                             else:
                                 state = State_TagStart
                         break
-                    elif ch == QChar('&'):
+                    elif ch == u'&':
                         start = pos
-                        while pos < len_ and text.at(pos) != QChar(';'):
+                        while pos < len_ and text[pos] != u';':
                             self.setFormat(start, pos - start,
                                     self.colors['entity'])
                             pos += 1
@@ -639,6 +631,7 @@ class Editor(QWidget):  # {{{
             t = getattr(self, 'toolbar%d'%i)
             t.setIconSize(QSize(18, 18))
         self.editor = EditorWidget(self)
+        self.set_html = self.editor.set_html
         self.tabs = QTabWidget(self)
         self.tabs.setTabPosition(self.tabs.South)
         self.wyswyg = QWidget(self.tabs)

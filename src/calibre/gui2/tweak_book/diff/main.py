@@ -9,7 +9,7 @@ __copyright__ = '2014, Kovid Goyal <kovid at kovidgoyal.net>'
 import sys, os, re
 from functools import partial
 
-from PyQt4.Qt import (
+from PyQt5.Qt import (
     QGridLayout, QToolButton, QIcon, QRadioButton, QMenu, QApplication, Qt,
     QSize, QWidget, QLabel, QStackedLayout, QPainter, QRect, QVBoxLayout,
     QCursor, QEventLoop, QKeySequence, pyqtSignal, QTimer, QHBoxLayout)
@@ -109,13 +109,13 @@ def get_decoded_raw(name):
             raw = xml_to_unicode(raw, verbose=True)[0]
         else:
             m = re.search(r"coding[:=]\s*([-\w.]+)", raw[:1024], flags=re.I)
-            if m is not None:
+            if m is not None and m.group(1) != '8bit':
                 enc = m.group(1)
             else:
                 enc = force_encoding(raw, verbose=True)
             try:
                 raw = raw.decode(enc)
-            except ValueError:
+            except (LookupError, ValueError):
                 pass
     return raw, syntax
 

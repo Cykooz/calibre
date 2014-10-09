@@ -10,10 +10,10 @@ from functools import partial
 from future_builtins import map
 from collections import OrderedDict
 
-from PyQt4.Qt import (
+from PyQt5.Qt import (
     QTableView, Qt, QAbstractItemView, QMenu, pyqtSignal, QFont, QModelIndex,
     QIcon, QItemSelection, QMimeData, QDrag, QStyle, QPoint, QUrl, QHeaderView,
-    QStyleOptionHeader)
+    QStyleOptionHeader, QItemSelectionModel)
 
 from calibre.gui2.library.delegates import (RatingDelegate, PubDateDelegate,
     TextDelegate, DateDelegate, CompleteDelegate, CcTextDelegate,
@@ -24,7 +24,7 @@ from calibre.gui2.library.alternate_views import AlternateViews, setup_dnd_inter
 from calibre.utils.config import tweaks, prefs
 from calibre.gui2 import error_dialog, gprefs, FunctionDispatcher
 from calibre.gui2.library import DEFAULT_SORT
-from calibre.constants import filesystem_encoding
+from calibre.constants import filesystem_encoding, isosx
 from calibre import force_unicode
 
 class HeaderView(QHeaderView):  # {{{
@@ -51,7 +51,7 @@ class HeaderView(QHeaderView):  # {{{
         opt.orientation = self.orientation()
         opt.textAlignment = Qt.AlignHCenter | Qt.AlignVCenter
         model = self.parent().model()
-        opt.text = model.headerData(logical_index, opt.orientation, Qt.DisplayRole).toString()
+        opt.text = unicode(model.headerData(logical_index, opt.orientation, Qt.DisplayRole) or '')
         if self.isSortIndicatorShown() and self.sortIndicatorSection() == logical_index:
             opt.sortIndicator = QStyleOptionHeader.SortDown if self.sortIndicatorOrder() == Qt.AscendingOrder else QStyleOptionHeader.SortUp
         opt.text = opt.fontMetrics.elidedText(opt.text, Qt.ElideRight, rect.width() - 4)
@@ -163,6 +163,7 @@ class BooksView(QTableView):  # {{{
 
     def __init__(self, parent, modelcls=BooksModel, use_edit_metadata_dialog=True):
         QTableView.__init__(self, parent)
+        self.default_row_height = self.verticalHeader().defaultSectionSize()
         self.gui = parent
         self.setProperty('highlight_current_item', 150)
         self.row_sizing_done = False
@@ -228,20 +229,20 @@ class BooksView(QTableView):  # {{{
         self.setHorizontalHeader(self.column_header)
         self.column_header.sortIndicatorChanged.disconnect()
         self.column_header.sortIndicatorChanged.connect(self.user_sort_requested)
-        self.column_header.setMovable(True)
-        self.column_header.setClickable(True)
+        self.column_header.setSectionsMovable(True)
+        self.column_header.setSectionsClickable(True)
         self.column_header.sectionMoved.connect(self.save_state)
         self.column_header.setContextMenuPolicy(Qt.CustomContextMenu)
         self.column_header.customContextMenuRequested.connect(self.show_column_header_context_menu)
         self.column_header.sectionResized.connect(self.column_resized, Qt.QueuedConnection)
         self.row_header = HeaderView(Qt.Vertical, self)
-        self.row_header.setResizeMode(self.row_header.Fixed)
+        self.row_header.setSectionResizeMode(self.row_header.Fixed)
         self.setVerticalHeader(self.row_header)
         # }}}
 
         self._model.database_changed.connect(self.database_changed)
         hv = self.verticalHeader()
-        hv.setClickable(True)
+        hv.setSectionsClickable(True)
         hv.setCursor(Qt.PointingHandCursor)
         self.selected_ids = []
         self._model.about_to_be_sorted.connect(self.about_to_be_sorted)
@@ -294,7 +295,7 @@ class BooksView(QTableView):  # {{{
         if idx > -1 and idx < len(self.column_map):
             col = self.column_map[idx]
             name = unicode(self.model().headerData(idx, Qt.Horizontal,
-                    Qt.DisplayRole).toString())
+                    Qt.DisplayRole) or '')
             self.column_header_context_menu = QMenu(self)
             if col != 'ondevice':
                 self.column_header_context_menu.addAction(_('Hide column %s') %
@@ -352,7 +353,7 @@ class BooksView(QTableView):  # {{{
                 for col in hidden_cols:
                     hidx = self.column_map.index(col)
                     name = unicode(self.model().headerData(hidx, Qt.Horizontal,
-                            Qt.DisplayRole).toString())
+                            Qt.DisplayRole) or '')
                     m.addAction(name,
                         partial(self.column_header_context_handler,
                         action='show', column=col))
@@ -455,9 +456,8 @@ class BooksView(QTableView):  # {{{
 
     # Ondevice column {{{
     def set_ondevice_column_visibility(self):
-        m  = self._model
-        self.column_header.setSectionHidden(m.column_map.index('ondevice'),
-                not m.device_connected)
+        col, h = self._model.column_map.index('ondevice'), self.column_header
+        h.setSectionHidden(col, not self._model.device_connected)
 
     def set_device_connected(self, is_connected):
         self._model.set_device_connected(is_connected)
@@ -541,6 +541,14 @@ class BooksView(QTableView):  # {{{
             current_pos = h.visualIndex(idx)
             if current_pos != pos:
                 h.moveSection(current_pos, pos)
+
+        # Because of a bug in Qt 5 we have to ensure that the header is actually
+        # relaid out by changing this value, without this sometimes ghost
+        # columns remain visible when changing libraries
+        for i in xrange(h.count()):
+            val = h.isSectionHidden(i)
+            h.setSectionHidden(i, not val)
+            h.setSectionHidden(i, val)
 
         sizes = state.get('column_sizes', {})
         for col, size in sizes.items():
@@ -658,9 +666,8 @@ class BooksView(QTableView):  # {{{
     def do_row_sizing(self):
         # Resize all rows to have the correct height
         if not self.row_sizing_done and self.model().rowCount(QModelIndex()) > 0:
-            self.resizeRowToContents(0)
-            self.verticalHeader().setDefaultSectionSize(self.rowHeight(0) +
-                                            gprefs['extra_row_spacing'])
+            vh = self.verticalHeader()
+            vh.setDefaultSectionSize(max(vh.minimumSectionSize(), self.default_row_height + gprefs['book_list_extra_row_spacing']))
             self._model.set_row_height(self.rowHeight(0))
             self.row_sizing_done = True
 
@@ -762,7 +769,11 @@ class BooksView(QTableView):  # {{{
 
         self.restore_state()
         self.set_ondevice_column_visibility()
-        #}}}
+        # incase there were marked books
+        self.model().set_row_decoration(set())
+        self.row_header.headerDataChanged(Qt.Vertical, 0, self.row_header.count()-1)
+        self.row_header.geometriesChanged.emit()
+        # }}}
 
     # Context Menu {{{
     def set_context_menu(self, menu, edit_collections_action):
@@ -897,6 +908,11 @@ class BooksView(QTableView):  # {{{
         elif action == QTableView.MoveEnd and modifiers & Qt.ControlModifier:
             return self.model().index(self.model().rowCount(QModelIndex()) - 1, orig.column())
         return index
+
+    def selectionCommand(self, index, event):
+        if event and event.type() == event.KeyPress and event.key() in (Qt.Key_Home, Qt.Key_End) and event.modifiers() & Qt.CTRL:
+            return QItemSelectionModel.ClearAndSelect | QItemSelectionModel.Rows
+        return super(BooksView, self).selectionCommand(index, event)
 
     def ids_to_rows(self, ids):
         row_map = OrderedDict()
@@ -1050,6 +1066,18 @@ class BooksView(QTableView):  # {{{
 
     def row_count(self):
         return self._model.count()
+
+    if isosx:
+        # Qt 5 item view handling of return key on OS X seems to be broken
+        # See https://bugreports.qt-project.org/browse/QTBUG-40938
+        def keyPressEvent(self, ev):
+            if ev.key() in (Qt.Key_Enter, Qt.Key_Return) and self.state() != self.EditingState:
+                ci = self.currentIndex()
+                if ci.isValid() and ci.flags() & Qt.ItemIsEditable:
+                    if self.edit(ci, self.EditKeyPressed, ev):
+                        ev.accept()
+                        return
+            return QTableView.keyPressEvent(self, ev)
 
 # }}}
 

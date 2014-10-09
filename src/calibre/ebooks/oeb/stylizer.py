@@ -12,7 +12,7 @@ import os, re, logging, copy, unicodedata
 from weakref import WeakKeyDictionary
 from xml.dom import SyntaxErr as CSSSyntaxError
 from cssutils.css import (CSSStyleRule, CSSPageRule, CSSFontFaceRule,
-        cssproperties)
+        cssproperties, CSSRule)
 from cssutils import (profile as cssprofiles, parseString, parseStyle, log as
         cssutils_log, CSSParser, profiles, replaceUrls)
 from lxml import etree
@@ -216,6 +216,8 @@ class Stylizer(object):
                                 self.logger.warn('CSS @import of non-CSS file %r' % rule.href)
                                 continue
                             stylesheets.append(sitem.data)
+                    for rule in tuple(stylesheet.cssRules.rulesOfType(CSSRule.PAGE_RULE)):
+                        stylesheet.cssRules.remove(rule)
                     # Make links to resources absolute, since these rules will
                     # be folded into a stylesheet at the root
                     replaceUrls(stylesheet, item.abshref,
@@ -255,7 +257,7 @@ class Stylizer(object):
         index = 0
         self.stylesheets = set()
         self.page_rule = {}
-        for stylesheet in stylesheets:
+        for sheet_index, stylesheet in enumerate(stylesheets):
             href = stylesheet.href
             self.stylesheets.add(href)
             for rule in stylesheet.cssRules:
@@ -265,15 +267,15 @@ class Stylizer(object):
                     if not media.intersection({'all', 'screen', 'amzn-kf8'}):
                         continue
                     for subrule in rule.cssRules:
-                        rules.extend(self.flatten_rule(subrule, href, index))
+                        rules.extend(self.flatten_rule(subrule, href, index, is_user_agent_sheet=sheet_index==0))
                         index += 1
                 else:
-                    rules.extend(self.flatten_rule(rule, href, index))
+                    rules.extend(self.flatten_rule(rule, href, index, is_user_agent_sheet=sheet_index==0))
                     index = index + 1
         rules.sort()
         self.rules = rules
         self._styles = {}
-        pseudo_pat = re.compile(ur':(first-letter|first-line|link|hover|visited|active|focus|before|after)', re.I)
+        pseudo_pat = re.compile(ur':{1,2}(first-letter|first-line|link|hover|visited|active|focus|before|after)', re.I)
         for _, _, cssdict, text, _ in rules:
             fl = pseudo_pat.search(text)
             if fl is not None:
@@ -349,12 +351,13 @@ class Stylizer(object):
         data = item.data.cssText
         return ('utf-8', data)
 
-    def flatten_rule(self, rule, href, index):
+    def flatten_rule(self, rule, href, index, is_user_agent_sheet=False):
         results = []
+        sheet_index = 0 if is_user_agent_sheet else 1
         if isinstance(rule, CSSStyleRule):
             style = self.flatten_style(rule.style)
             for selector in rule.selectorList:
-                specificity = selector.specificity + (index,)
+                specificity = (sheet_index,) + selector.specificity + (index,)
                 text = selector.selectorText
                 selector = list(selector.seq)
                 results.append((specificity, selector, style, text, href))

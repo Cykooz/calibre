@@ -12,9 +12,10 @@ from future_builtins import map
 from math import floor
 from collections import defaultdict
 
-from PyQt4.Qt import (QObject, QPainter, Qt, QSize, QString, QTimer,
-                      pyqtProperty, QEventLoop, QPixmap, QRect, pyqtSlot)
-from PyQt4.QtWebKit import QWebView, QWebPage, QWebSettings
+from PyQt5.Qt import (
+    QObject, QPainter, Qt, QSize, QTimer, pyqtProperty, QEventLoop, QPixmap, QRect, pyqtSlot)
+from PyQt5.QtWebKit import QWebSettings
+from PyQt5.QtWebKitWidgets import QWebView, QWebPage
 
 from calibre import fit_image
 from calibre.constants import iswindows
@@ -124,12 +125,12 @@ class PDFWriter(QObject):
 
     def _pass_json_value_getter(self):
         val = json.dumps(self.bridge_value)
-        return QString(val)
+        return val
 
     def _pass_json_value_setter(self, value):
         self.bridge_value = json.loads(unicode(value))
 
-    _pass_json_value = pyqtProperty(QString, fget=_pass_json_value_getter,
+    _pass_json_value = pyqtProperty(str, fget=_pass_json_value_getter,
             fset=_pass_json_value_setter)
 
     @pyqtSlot(result=unicode)
@@ -145,9 +146,8 @@ class PDFWriter(QObject):
         return self.current_section
 
     def __init__(self, opts, log, cover_data=None, toc=None):
-        from calibre.gui2 import is_ok_to_use_qt
-        if not is_ok_to_use_qt():
-            raise Exception('Not OK to use Qt')
+        from calibre.gui2 import must_use_qt
+        must_use_qt()
         QObject.__init__(self)
 
         self.logger = self.log = log
@@ -301,12 +301,12 @@ class PDFWriter(QObject):
         mjpath = P(u'viewer/mathjax').replace(os.sep, '/')
         if iswindows:
             mjpath = u'/' + mjpath
-        if evaljs('''
+        if bool(evaljs('''
                     window.mathjax.base = %s;
                     mathjax.check_for_math(); mathjax.math_present
-                    '''%(json.dumps(mjpath, ensure_ascii=False))).toBool():
+                    '''%(json.dumps(mjpath, ensure_ascii=False)))):
             self.log.debug('Math present, loading MathJax')
-            while not evaljs('mathjax.math_loaded').toBool():
+            while not bool(evaljs('mathjax.math_loaded')):
                 self.loop.processEvents(self.loop.ExcludeUserInputEvents)
             evaljs('document.getElementById("MathJax_Message").style.display="none";')
 
@@ -345,11 +345,9 @@ class PDFWriter(QObject):
         self.load_mathjax()
 
         evaljs('''
-        py_bridge.__defineGetter__('value', function() {
-            return JSON.parse(this._pass_json_value);
-        });
-        py_bridge.__defineSetter__('value', function(val) {
-            this._pass_json_value = JSON.stringify(val);
+        Object.defineProperty(py_bridge, 'value', {
+               get : function() { return JSON.parse(this._pass_json_value); },
+               set : function(val) { this._pass_json_value = JSON.stringify(val); }
         });
 
         document.body.style.backgroundColor = "white";
@@ -391,11 +389,14 @@ class PDFWriter(QObject):
             self.painter.save()
             mf.render(self.painter)
             self.painter.restore()
-            nsl = evaljs('paged_display.next_screen_location()').toInt()
-            self.doc.end_page()
-            if not nsl[1] or nsl[0] <= 0:
+            try:
+                nsl = int(evaljs('paged_display.next_screen_location()'))
+            except (TypeError, ValueError):
                 break
-            evaljs('window.scrollTo(%d, 0); paged_display.position_header_footer();'%nsl[0])
+            self.doc.end_page()
+            if nsl <= 0:
+                break
+            evaljs('window.scrollTo(%d, 0); paged_display.position_header_footer();'%nsl)
             if self.doc.errors_occurred:
                 break
             col += 1

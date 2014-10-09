@@ -17,7 +17,6 @@ except ImportError:
 from lxml import html, etree
 
 from calibre import (xml_entity_to_unicode, entity_to_unicode)
-from calibre.utils.filenames import ascii_filename
 from calibre.utils.cleantext import clean_ascii_chars
 from calibre.ebooks import DRMError, unit_convert
 from calibre.ebooks.chardet import ENCODING_PATS
@@ -120,9 +119,10 @@ class MobiReader(object):
                 try:
                     self.book_header = BookHeader(self.sections[k8i][0],
                             self.ident, user_encoding, self.log)
+                    self.book_header.kf8_first_image_index = self.book_header.first_image_index + k8i
+                    self.book_header.mobi6_records = bh.records
 
-                    # Only the first_image_index from the MOBI 6 header is
-                    # useful
+                    # Need the first_image_index from the mobi 6 header as well
                     for x in ('first_image_index',):
                         setattr(self.book_header, x, getattr(bh, x))
 
@@ -265,12 +265,7 @@ class MobiReader(object):
             self.read_embedded_metadata(root, metadata_elems[0], guide)
         for elem in guides + metadata_elems:
             elem.getparent().remove(elem)
-        fname = self.name.encode('ascii', 'replace')
-        fname = re.sub(r'[\x08\x15\0]+', '', fname)
-        if not fname:
-            fname = 'dummy'
-        htmlfile = os.path.join(output_dir,
-            ascii_filename(fname) + '.html')
+        htmlfile = os.path.join(output_dir, 'index.html')
         try:
             for ref in guide.xpath('descendant::reference'):
                 if 'href' in ref.attrib:
@@ -517,6 +512,11 @@ class MobiReader(object):
             if (attrib.get('class', None) == 'mbp_pagebreak' and tag.tag ==
                     'div' and 'filepos-id' in attrib):
                 pagebreak_anchors.append(tag)
+
+            if 'color' in attrib:
+                styles.append('color: ' + attrib.pop('color'))
+            if 'bgcolor' in attrib:
+                styles.append('background-color: ' + attrib.pop('bgcolor'))
 
             if 'filepos-id' in attrib:
                 attrib['id'] = attrib.pop('filepos-id')

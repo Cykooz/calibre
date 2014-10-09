@@ -9,18 +9,19 @@ __docformat__ = 'restructuredtext en'
 
 '''The main GUI'''
 
-import collections, os, sys, textwrap, time, gc
+import collections, os, sys, textwrap, time, gc, errno
 from Queue import Queue, Empty
 from threading import Thread
 from collections import OrderedDict
+from io import BytesIO
 
 import apsw
-from PyQt4.Qt import (Qt, QTimer, QHelpEvent, QAction,
+from PyQt5.Qt import (Qt, QTimer, QHelpEvent, QAction,
                      QMenu, QIcon, pyqtSignal, QUrl, QFont,
                      QDialog, QSystemTrayIcon, QApplication)
 
 from calibre import prints, force_unicode
-from calibre.constants import __appname__, isosx, filesystem_encoding, DEBUG
+from calibre.constants import __appname__, isosx, filesystem_encoding, DEBUG, islinux, isbsd
 from calibre.utils.config import prefs, dynamic
 from calibre.utils.ipc.server import Server
 from calibre.db.legacy import LibraryDatabase
@@ -46,6 +47,7 @@ from calibre.gui2.auto_add import AutoAdder
 from calibre.gui2.proceed import ProceedQuestion
 from calibre.gui2.dialogs.message_box import JobError
 from calibre.gui2.job_indicator import Pointer
+from calibre.library import current_library_name
 
 class Listener(Thread):  # {{{
 
@@ -70,7 +72,8 @@ class Listener(Thread):  # {{{
     def close(self):
         self._run = False
         try:
-            self.listener.close()
+            if self.listener is not None:
+                self.listener.close()
         except:
             import traceback
             traceback.print_exc()
@@ -99,14 +102,47 @@ _gui = None
 def get_gui():
     return _gui
 
+def add_quick_start_guide(library_view, db_images):
+    from calibre.ebooks.metadata.meta import get_metadata
+    from calibre.ebooks import calibre_cover
+    from calibre.utils.zipfile import safe_replace
+    from calibre.utils.localization import get_lang, canonicalize_lang
+    from calibre.ptempfile import PersistentTemporaryFile
+    l = canonicalize_lang(get_lang()) or 'eng'
+    gprefs['quick_start_guide_added'] = True
+    imgbuf = BytesIO(calibre_cover(_('Quick Start Guide'), '', author_size=8))
+    try:
+        with open(P('quick_start/%s.epub' % l), 'rb') as src:
+            buf = BytesIO(src.read())
+    except EnvironmentError as err:
+        if err.errno != errno.ENOENT:
+            raise
+        with open(P('quick_start/eng.epub'), 'rb') as src:
+            buf = BytesIO(src.read())
+    safe_replace(buf, 'images/cover.jpg', imgbuf)
+    buf.seek(0)
+    mi = get_metadata(buf, 'epub')
+    with PersistentTemporaryFile('.epub') as tmp:
+        tmp.write(buf.getvalue())
+    library_view.model().add_books([tmp.name], ['epub'], [mi])
+    os.remove(tmp.name)
+    library_view.model().books_added(1)
+    if hasattr(db_images, 'reset'):
+        db_images.reset()
+    if library_view.model().rowCount(None) < 3:
+        library_view.resizeColumnsToContents()
+
+
 class Main(MainWindow, MainWindowMixin, DeviceMixin, EmailMixin,  # {{{
         TagBrowserMixin, CoverFlowMixin, LibraryViewMixin, SearchBoxMixin,
         SavedSearchBoxMixin, SearchRestrictionMixin, LayoutMixin, UpdateMixin,
         EbookDownloadMixin
         ):
+
     'The main GUI'
 
     proceed_requested = pyqtSignal(object, object)
+    book_converted = pyqtSignal(object, object)
 
     def __init__(self, opts, parent=None, gui_debug=None):
         global _gui
@@ -188,7 +224,7 @@ class Main(MainWindow, MainWindowMixin, DeviceMixin, EmailMixin,  # {{{
         else:
             stmap[st.name] = st
 
-    def initialize(self, library_path, db, listener, actions, show_gui=True):
+    def initialize(self, library_path, db, listener, actions, show_gui=True, splash_screen=None):
         opts = self.opts
         self.preferences_action, self.quit_action = actions
         self.library_path = library_path
@@ -213,7 +249,7 @@ class Main(MainWindow, MainWindowMixin, DeviceMixin, EmailMixin,  # {{{
                 _('&Donate to support calibre'), self)
         for st in self.istores.values():
             st.do_genesis()
-        MainWindowMixin.__init__(self, db)
+        MainWindowMixin.init_main_window_mixin(self, db)
 
         # Jobs Button {{{
         self.job_manager = JobManager()
@@ -222,10 +258,8 @@ class Main(MainWindow, MainWindowMixin, DeviceMixin, EmailMixin,  # {{{
         self.jobs_button.initialize(self.jobs_dialog, self.job_manager)
         # }}}
 
-        LayoutMixin.__init__(self)
-        EmailMixin.__init__(self)
-        EbookDownloadMixin.__init__(self)
-        DeviceMixin.__init__(self)
+        LayoutMixin.init_layout_mixin(self)
+        DeviceMixin.init_device_mixin(self)
 
         self.progress_indicator = ProgressIndicator(self)
         self.progress_indicator.pos = (0, 20)
@@ -240,7 +274,10 @@ class Main(MainWindow, MainWindowMixin, DeviceMixin, EmailMixin,  # {{{
         self.system_tray_icon.setToolTip('calibre')
         self.system_tray_icon.tooltip_requested.connect(
                 self.job_manager.show_tooltip)
-        if not config['systray_icon']:
+        systray_ok = config['systray_icon'] and not (islinux or isbsd)
+        # System tray icons are broken on linux, see
+        # https://bugreports.qt-project.org/browse/QTBUG-31762
+        if not systray_ok:
             self.system_tray_icon.hide()
         else:
             self.system_tray_icon.show()
@@ -292,46 +329,42 @@ class Main(MainWindow, MainWindowMixin, DeviceMixin, EmailMixin,  # {{{
                 action=self.alt_esc_action)
         self.alt_esc_action.triggered.connect(self.clear_additional_restriction)
 
-        ####################### Start spare job server ########################
+        # ###################### Start spare job server ########################
         QTimer.singleShot(1000, self.add_spare_server)
 
-        ####################### Location Manager ########################
+        # ###################### Location Manager ########################
         self.location_manager.location_selected.connect(self.location_selected)
         self.location_manager.unmount_device.connect(self.device_manager.umount_device)
         self.location_manager.configure_device.connect(self.configure_connected_device)
         self.location_manager.update_device_metadata.connect(self.update_metadata_on_device)
         self.eject_action.triggered.connect(self.device_manager.umount_device)
 
-        #################### Update notification ###################
-        UpdateMixin.__init__(self, opts)
+        # ################### Update notification ###################
+        UpdateMixin.init_update_mixin(self, opts)
 
-        ####################### Search boxes ########################
-        SearchRestrictionMixin.__init__(self)
-        SavedSearchBoxMixin.__init__(self)
+        # ###################### Search boxes ########################
+        SearchRestrictionMixin.init_search_restirction_mixin(self)
+        SavedSearchBoxMixin.init_saved_seach_box_mixin(self)
 
-        ####################### Library view ########################
-        LibraryViewMixin.__init__(self, db)
-        SearchBoxMixin.__init__(self)  # Requires current_db
+        # ###################### Library view ########################
+        LibraryViewMixin.init_library_view_mixin(self, db)
+        SearchBoxMixin.init_search_box_mixin(self)  # Requires current_db
 
         if show_gui:
             self.show()
+        if splash_screen is not None:
+            splash_screen.hide()
 
         if self.system_tray_icon.isVisible() and opts.start_in_tray:
             self.hide_windows()
         self.library_view.model().count_changed_signal.connect(
                 self.iactions['Choose Library'].count_changed)
         if not gprefs.get('quick_start_guide_added', False):
-            from calibre.ebooks.metadata.meta import get_metadata
-            mi = get_metadata(open(P('quick_start.epub'), 'rb'), 'epub')
-            self.library_view.model().add_books([P('quick_start.epub')], ['epub'],
-                    [mi])
-            gprefs['quick_start_guide_added'] = True
-            self.library_view.model().books_added(1)
-            if hasattr(self, 'db_images'):
-                self.db_images.reset()
-            if self.library_view.model().rowCount(None) < 3:
-                self.library_view.resizeColumnsToContents()
-
+            try:
+                add_quick_start_guide(self.library_view, getattr(self, 'db_images', None))
+            except:
+                import traceback
+                traceback.print_exc()
         for view in ('library', 'memory', 'card_a', 'card_b'):
             v = getattr(self, '%s_view' % view)
             v.selectionModel().selectionChanged.connect(self.update_status_bar)
@@ -342,17 +375,17 @@ class Main(MainWindow, MainWindowMixin, DeviceMixin, EmailMixin,  # {{{
         self.library_view.model().database_changed.connect(self.bars_manager.database_changed,
                 type=Qt.QueuedConnection)
 
-        ########################### Tags Browser ##############################
-        TagBrowserMixin.__init__(self, db)
+        # ########################## Tags Browser ##############################
+        TagBrowserMixin.init_tag_browser_mixin(self, db)
 
-        ######################### Search Restriction ##########################
+        # ######################## Search Restriction ##########################
         if db.prefs['virtual_lib_on_startup']:
             self.apply_virtual_library(db.prefs['virtual_lib_on_startup'])
         self.rebuild_vl_tabs()
 
-        ########################### Cover Flow ################################
+        # ########################## Cover Flow ################################
 
-        CoverFlowMixin.__init__(self)
+        CoverFlowMixin.init_cover_flow_mixin(self)
 
         self._calculated_available_height = min(max_available_height()-15,
                 self.height())
@@ -388,7 +421,8 @@ class Main(MainWindow, MainWindowMixin, DeviceMixin, EmailMixin,  # {{{
                 traceback.print_exc()
                 if ac.plugin_path is None:
                     raise
-        self.device_manager.set_current_library_uuid(db.library_id)
+        self.set_current_library_information(current_library_name(), db.library_id,
+                                             db.field_metadata)
 
         self.keyboard.finalize()
         self.auto_adder = AutoAdder(gprefs['auto_add_path'], self)
@@ -430,9 +464,9 @@ class Main(MainWindow, MainWindowMixin, DeviceMixin, EmailMixin,  # {{{
                 traceback.print_exc()
         if message:
             if not self.device_manager.is_running('Wireless Devices'):
-                    error_dialog(self, _('Problem starting the wireless device'),
-                                 _('The wireless device driver had problems starting. '
-                                   'It said "%s"')%message, show=True)
+                error_dialog(self, _('Problem starting the wireless device'),
+                             _('The wireless device driver had problems starting. '
+                               'It said "%s"')%message, show=True)
         self.iactions['Connect Share'].set_smartdevice_action_state()
 
     def start_content_server(self, check_started=True):
@@ -637,7 +671,7 @@ class Main(MainWindow, MainWindowMixin, DeviceMixin, EmailMixin,  # {{{
         self.search.clear()
         self.saved_search.clear()
         self.book_details.reset_info()
-        #self.library_view.model().count_changed()
+        # self.library_view.model().count_changed()
         db = self.library_view.model().db
         self.iactions['Choose Library'].count_changed(db.count())
         self.set_window_title()
@@ -662,7 +696,8 @@ class Main(MainWindow, MainWindowMixin, DeviceMixin, EmailMixin,  # {{{
             self.memory_view.reset()
             self.card_a_view.reset()
             self.card_b_view.reset()
-        self.device_manager.set_current_library_uuid(db.library_id)
+        self.set_current_library_information(current_library_name(), db.library_id,
+                                             db.field_metadata)
         self.library_view.set_current_row(0)
         # Run a garbage collection now so that it does not freeze the
         # interface later
@@ -923,4 +958,3 @@ class Main(MainWindow, MainWindowMixin, DeviceMixin, EmailMixin,  # {{{
                 e.ignore()
 
     # }}}
-

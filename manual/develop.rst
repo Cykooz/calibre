@@ -1,5 +1,3 @@
-.. include:: global.rst
-
 .. _develop:
 
 Setting up a |app| development environment
@@ -21,7 +19,7 @@ Design philosophy
 |app| has its roots in the Unix world, which means that its design is highly modular.
 The modules interact with each other via well defined interfaces. This makes adding new features and fixing
 bugs in |app| very easy, resulting in a frenetic pace of development. Because of its roots, |app| has a
-comprehensive command line interface for all its functions, documented in :ref:`cli`.
+comprehensive command line interface for all its functions, documented in :doc:`generated/|lang|/cli-index`.
 
 The modular design of |app| is expressed via ``Plugins``. There is a :ref:`tutorial <customize>` on writing |app| plugins.
 For example, adding support for a new device to |app| typically involves writing less than a 100 lines of code in the form of
@@ -57,12 +55,13 @@ All the |app| python code is in the ``calibre`` package. This package contains t
           various transformations that are applied to the book during
           conversions live in :file:`oeb/transforms/*.py`. And the input and output
           plugins live in :file:`conversion/plugins/*.py`.
-        * Ebook editing happens using a different container object. All the
-          code for editing is in ``ebooks.oeb.polish`` in particular the
-          container object is in ``ebooks.oeb.polish.container``.
+        * Ebook editing happens using a different container object. It is
+          documented in :ref:`polish_api`.
 
-    * db - The database back-end. See ``db.cache`` for the interface to the |app| library. With a DB object you can access this API via ``db.new_api``. The db object itself exposes a legacy API that should not be used in new code. The legacy API is in ``library.database2``.
+    * db - The database back-end. See :ref:`db_api` for the interface to the |app| library. 
+
     * content server: ``library.server`` is the |app| Content Server.
+
     * gui2 - The Graphical User Interface. GUI initialization happens in ``gui2.main`` and ``gui2.ui``. The ebook-viewer is in ``gui2.viewer``. The ebook editor is in ``gui2.tweak_book``.
 
 If you want to locate the entry points for all the various |app| executables,
@@ -133,6 +132,7 @@ for inclusion into the main |app| repository:
   * In a Terminal do::
 
         git clone git@github.com:<username>/calibre.git
+        git remote add upstream https://github.com/kovidgoyal/calibre.git
 
     Replace <username> above with your github username. That will get your fork checked out locally.
   * You can make changes and commit them whenever you like. When you are ready to have your work merged, do a::
@@ -224,7 +224,7 @@ used in Windows and OS X. Alternatively, you can install |app| from source. Inst
 environment from source are in the INSTALL file in the source tree. Here we will address using the binary at runtime, which is the
 recommended method.
 
-Install the |app| using the binary installer. Then open a terminal and change to the previously checked out |app| code directory, for example::
+Install |app| using the binary installer. Then open a terminal and change to the previously checked out |app| code directory, for example::
 
     cd /home/kovid/work/calibre
 
@@ -395,4 +395,15 @@ you can also directly import |app|, as follows::
 
 It is essential that you import the init_calibre module before any other |app| modules/packages as
 it sets up the interpreter to run |app| code.
+
+API documentation for various parts of |app|
+------------------------------------------------
+
+.. toctree::
+    :maxdepth: 1
+
+    news_recipe
+    plugins
+    db_api
+    polish
 

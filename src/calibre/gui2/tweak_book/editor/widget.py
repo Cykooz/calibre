@@ -9,13 +9,21 @@ __copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
 import unicodedata
 from functools import partial
 
-from PyQt4.Qt import (
+from PyQt5.Qt import (
     QMainWindow, Qt, QApplication, pyqtSignal, QMenu, qDrawShadeRect, QPainter,
-    QImage, QColor, QIcon, QPixmap, QToolButton)
+    QImage, QColor, QIcon, QPixmap, QToolButton, QAction, QTextCursor)
 
-from calibre.gui2 import error_dialog
-from calibre.gui2.tweak_book import actions, current_container, tprefs
+from calibre import prints
+from calibre.constants import DEBUG
+from calibre.ebooks.chardet import replace_encoding_declarations
+from calibre.gui2.tweak_book import (
+    actions, current_container, tprefs, dictionaries, editor_toolbar_actions,
+    editor_name, editors, update_mark_text_action)
+from calibre.gui2 import error_dialog, open_url, workaround_broken_under_mouse
+from calibre.gui2.tweak_book.editor import SPELL_PROPERTY, LINK_PROPERTY, TAG_NAME_PROPERTY, CSS_PROPERTY
+from calibre.gui2.tweak_book.editor.help import help_url
 from calibre.gui2.tweak_book.editor.text import TextEdit
+from calibre.utils.icu import utf16_length
 
 def create_icon(text, palette=None, sz=32, divider=2):
     if palette is None:
@@ -32,7 +40,13 @@ def create_icon(text, palette=None, sz=32, divider=2):
     p.end()
     return QIcon(QPixmap.fromImage(img))
 
-def register_text_editor_actions(reg, palette):
+def register_text_editor_actions(_reg, palette):
+    def reg(*args, **kw):
+        ac = _reg(*args)
+        for s in kw.get('syntaxes', ('format',)):
+            editor_toolbar_actions[s][args[3]] = ac
+        return ac
+
     ac = reg('format-text-bold', _('&Bold'), ('format_text', 'bold'), 'format-text-bold', 'Ctrl+B', _('Make the selected text bold'))
     ac.setToolTip(_('<h3>Bold</h3>Make the selected text bold'))
     ac = reg('format-text-italic', _('&Italic'), ('format_text', 'italic'), 'format-text-italic', 'Ctrl+I', _('Make the selected text italic'))
@@ -53,21 +67,42 @@ def register_text_editor_actions(reg, palette):
     ac = reg('format-fill-color', _('&Background Color'), ('format_text', 'background-color'),
              'format-text-background-color', (), _('Change background color of text'))
     ac.setToolTip(_('<h3>Background Color</h3>Change the background color of the selected text'))
+    ac = reg('format-justify-left', _('Align &left'), ('format_text', 'justify_left'), 'format-text-justify-left', (), _('Align left'))
+    ac.setToolTip(_('<h3>Align left</h3>Align the paragraph to the left'))
+    ac = reg('format-justify-center', _('&Center'), ('format_text', 'justify_center'), 'format-text-justify-center', (), _('Center'))
+    ac.setToolTip(_('<h3>Center</h3>Center the paragraph'))
+    ac = reg('format-justify-right', _('Align &right'), ('format_text', 'justify_right'), 'format-text-justify-right', (), _('Align right'))
+    ac.setToolTip(_('<h3>Align right</h3>Align the paragraph to the right'))
+    ac = reg('format-justify-fill', _('&Justify'), ('format_text', 'justify_justify'), 'format-text-justify-fill', (), _('Justify'))
+    ac.setToolTip(_('<h3>Justify</h3>Align the paragraph to both the left and right margins'))
 
-    ac = reg('view-image', _('&Insert image'), ('insert_resource', 'image'), 'insert-image', (), _('Insert an image into the text'))
+    ac = reg('view-image', _('&Insert image'), ('insert_resource', 'image'), 'insert-image', (), _('Insert an image into the text'), syntaxes=('html', 'css'))
     ac.setToolTip(_('<h3>Insert image</h3>Insert an image into the text'))
 
-    ac = reg('insert-link', _('Insert &hyperlink'), ('insert_hyperlink',), 'insert-hyperlink', (), _('Insert hyperlink'))
+    ac = reg('insert-link', _('Insert &hyperlink'), ('insert_hyperlink',), 'insert-hyperlink', (), _('Insert hyperlink'), syntaxes=('html',))
     ac.setToolTip(_('<h3>Insert hyperlink</h3>Insert a hyperlink into the text'))
 
     for i, name in enumerate(('h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p')):
         text = ('&' + name) if name == 'p' else (name[0] + '&' + name[1])
         desc = _('Convert the paragraph to &lt;%s&gt;') % name
-        ac = reg(create_icon(name), text, ('rename_block_tag', name), 'rename-block-tag-' + name, 'Ctrl+%d' % (i + 1), desc)
+        ac = reg(create_icon(name), text, ('rename_block_tag', name), 'rename-block-tag-' + name, 'Ctrl+%d' % (i + 1), desc, syntaxes=())
         ac.setToolTip(desc)
 
-    ac = reg('code', _('Insert &tag'), ('insert_tag',), 'insert-tag', ('Ctrl+<'), _('Insert tag'))
+    for transform, text in [
+            ('upper', _('&Upper case')), ('lower', _('&Lower case')), ('swap', _('&Swap case')),
+            ('title', _('&Title case')), ('capitalize', _('&Capitalize'))]:
+        desc = _('Change the case of the selected text: %s') % text
+        ac = reg(None, text, ('change_case', transform), 'transform-case-' + transform, (), desc, syntaxes=())
+        ac.setToolTip(desc)
+
+    ac = reg('code', _('Insert &tag'), ('insert_tag',), 'insert-tag', ('Ctrl+<'), _('Insert tag'), syntaxes=('html', 'xml'))
     ac.setToolTip(_('<h3>Insert tag</h3>Insert a tag, if some text is selected the tag will be inserted around the selected text'))
+
+    editor_toolbar_actions['html']['fix-html-current'] = actions['fix-html-current']
+    for s in ('xml', 'html', 'css'):
+        editor_toolbar_actions[s]['pretty-current'] = actions['pretty-current']
+    editor_toolbar_actions['html']['change-paragraph'] = actions['change-paragraph'] = QAction(
+        QIcon(I('format-text-heading.png')), _('Change paragraph to heading'), ac.parent())
 
 
 class Editor(QMainWindow):
@@ -79,6 +114,9 @@ class Editor(QMainWindow):
     copy_available_state_changed = pyqtSignal(object)
     data_changed = pyqtSignal(object)
     cursor_position_changed = pyqtSignal()
+    word_ignored = pyqtSignal(object, object)
+    link_clicked = pyqtSignal(object)
+    smart_highlighting_updated = pyqtSignal()
 
     def __init__(self, syntax, parent=None):
         QMainWindow.__init__(self, parent)
@@ -100,6 +138,8 @@ class Editor(QMainWindow):
         self.editor.textChanged.connect(self._data_changed)
         self.editor.copyAvailable.connect(self._copy_available)
         self.editor.cursorPositionChanged.connect(self._cursor_position_changed)
+        self.editor.link_clicked.connect(self.link_clicked)
+        self.editor.smart_highlighting_updated.connect(self.smart_highlighting_updated)
 
     @dynamic_property
     def current_line(self):
@@ -109,6 +149,9 @@ class Editor(QMainWindow):
             self.editor.go_to_line(val)
         return property(fget=fget, fset=fset)
 
+    def current_tag(self, for_position_sync=True):
+        return self.editor.current_tag(for_position_sync=for_position_sync)
+
     @property
     def number_of_lines(self):
         return self.editor.blockCount()
@@ -117,15 +160,23 @@ class Editor(QMainWindow):
     def data(self):
         def fget(self):
             ans = self.get_raw_data()
+            ans, changed = replace_encoding_declarations(ans, enc='utf-8', limit=4*1024)
+            if changed:
+                self.data = ans
             return ans.encode('utf-8')
         def fset(self, val):
-            self.editor.load_text(val, syntax=self.syntax)
+            self.editor.load_text(val, syntax=self.syntax, doc_name=editor_name(self))
         return property(fget=fget, fset=fset)
 
     def init_from_template(self, template):
-        self.editor.load_text(template, syntax=self.syntax, process_template=True)
+        self.editor.load_text(template, syntax=self.syntax, process_template=True, doc_name=editor_name(self))
+
+    def change_document_name(self, newname):
+        self.editor.change_document_name(newname)
 
     def get_raw_data(self):
+        # The EPUB spec requires NFC normalization, see section 1.3.6 of
+        # http://www.idpf.org/epub/20/spec/OPS_2.0.1_draft.htm
         return unicodedata.normalize('NFC', unicode(self.editor.toPlainText()).rstrip('\0'))
 
     def replace_data(self, raw, only_if_different=True):
@@ -135,8 +186,8 @@ class Editor(QMainWindow):
         if current != raw:
             self.editor.replace_text(raw)
 
-    def apply_settings(self, prefs=None):
-        self.editor.apply_settings(prefs=None)
+    def apply_settings(self, prefs=None, dictionaries_changed=False):
+        self.editor.apply_settings(prefs=None, dictionaries_changed=dictionaries_changed)
 
     def set_focus(self):
         self.editor.setFocus(Qt.OtherFocusReason)
@@ -153,7 +204,7 @@ class Editor(QMainWindow):
         self.editor.insert_hyperlink(href, text)
 
     def _build_insert_tag_button_menu(self):
-        m = self.insert_tag_button.menu()
+        m = self.insert_tag_menu
         m.clear()
         for name in tprefs['insert_tag_mru']:
             m.addAction(name, partial(self.insert_tag, name))
@@ -189,6 +240,9 @@ class Editor(QMainWindow):
     def find(self, *args, **kwargs):
         return self.editor.find(*args, **kwargs)
 
+    def find_spell_word(self, *args, **kwargs):
+        return self.editor.find_spell_word(*args, **kwargs)
+
     def replace(self, *args, **kwargs):
         return self.editor.replace(*args, **kwargs)
 
@@ -212,46 +266,93 @@ class Editor(QMainWindow):
         return property(fget=fget, fset=fset)
 
     def create_toolbars(self):
-        self.action_bar = b = self.addToolBar(_('File actions tool bar'))
+        self.action_bar = b = self.addToolBar(_('Edit actions tool bar'))
         b.setObjectName('action_bar')  # Needed for saveState
-        for x in ('undo', 'redo'):
-            b.addAction(actions['editor-%s' % x])
-        self.edit_bar = b = self.addToolBar(_('Edit actions tool bar'))
-        for x in ('cut', 'copy', 'paste'):
-            b.addAction(actions['editor-%s' % x])
         self.tools_bar = b = self.addToolBar(_('Editor tools'))
         b.setObjectName('tools_bar')
-        if self.syntax == 'html':
-            b.addAction(actions['fix-html-current'])
-        if self.syntax in {'xml', 'html', 'css'}:
-            b.addAction(actions['pretty-current'])
-        if self.syntax in {'html', 'css'}:
-            b.addAction(actions['insert-image'])
-        if self.syntax == 'html':
-            b.addAction(actions['insert-hyperlink'])
-        if self.syntax in {'xml', 'html'}:
-            b.addAction(actions['insert-tag'])
-            w = self.insert_tag_button = b.widgetForAction(actions['insert-tag'])
-            w.setPopupMode(QToolButton.MenuButtonPopup)
-            w.m = m = QMenu()
-            w.setMenu(m)
-            w.setContextMenuPolicy(Qt.CustomContextMenu)
-            w.customContextMenuRequested.connect(self.insert_tag_button.showMenu)
-            self._build_insert_tag_button_menu()
+        self.bars = [self.action_bar, self.tools_bar]
         if self.syntax == 'html':
             self.format_bar = b = self.addToolBar(_('Format text'))
             b.setObjectName('html_format_bar')
-            for x in ('bold', 'italic', 'underline', 'strikethrough', 'subscript', 'superscript', 'color', 'background-color'):
-                b.addAction(actions['format-text-%s' % x])
-            ac = b.addAction(QIcon(I('format-text-heading.png')), _('Change paragraph to heading'))
-            m = QMenu()
-            ac.setMenu(m)
-            b.widgetForAction(ac).setPopupMode(QToolButton.InstantPopup)
-            for name in tuple('h%d' % d for d in range(1, 7)) + ('p',):
-                m.addAction(actions['rename-block-tag-%s' % name])
+            self.bars.append(self.format_bar)
+        self.insert_tag_menu = QMenu(self)
+        self.populate_toolbars()
+        for x in self.bars:
+            x.setFloatable(False)
+            x.topLevelChanged.connect(self.toolbar_floated)
+
+    def toolbar_floated(self, floating):
+        if not floating:
+            self.save_state()
+            for ed in editors.itervalues():
+                if ed is not self:
+                    ed.restore_state()
+
+    def save_state(self):
+        for bar in self.bars:
+            if bar.isFloating():
+                return
+        tprefs['%s-editor-state' % self.syntax] = bytearray(self.saveState())
+
+    def restore_state(self):
+        state = tprefs.get('%s-editor-state' % self.syntax, None)
+        if state is not None:
+            self.restoreState(state)
+
+    def populate_toolbars(self):
+        self.action_bar.clear(), self.tools_bar.clear()
+        def add_action(name, bar):
+            if name is None:
+                bar.addSeparator()
+                return
+            try:
+                ac = actions[name]
+            except KeyError:
+                if DEBUG:
+                    prints('Unknown editor tool: %r' % name)
+                return
+            bar.addAction(ac)
+            if name == 'insert-tag':
+                w = bar.widgetForAction(ac)
+                w.setPopupMode(QToolButton.MenuButtonPopup)
+                w.setMenu(self.insert_tag_menu)
+                w.setContextMenuPolicy(Qt.CustomContextMenu)
+                w.customContextMenuRequested.connect(w.showMenu)
+                self._build_insert_tag_button_menu()
+                if workaround_broken_under_mouse is not None:
+                    try:
+                        self.insert_tag_menu.aboutToHide.disconnect()
+                    except TypeError:
+                        pass
+                    self.insert_tag_menu.aboutToHide.connect(partial(workaround_broken_under_mouse, w))
+            elif name == 'change-paragraph':
+                m = ac.m = QMenu()
+                ac.setMenu(m)
+                ch = bar.widgetForAction(ac)
+                ch.setPopupMode(QToolButton.InstantPopup)
+                if workaround_broken_under_mouse is not None:
+                    m.aboutToHide.connect(partial(workaround_broken_under_mouse, ch))
+                for name in tuple('h%d' % d for d in range(1, 7)) + ('p',):
+                    m.addAction(actions['rename-block-tag-%s' % name])
+
+        for name in tprefs.get('editor_common_toolbar', ()):
+            add_action(name, self.action_bar)
+
+        for name in tprefs.get('editor_%s_toolbar' % self.syntax, ()):
+            add_action(name, self.tools_bar)
+
+        if self.syntax == 'html':
+            self.format_bar.clear()
+            for name in tprefs['editor_format_toolbar']:
+                add_action(name, self.format_bar)
+        self.restore_state()
 
     def break_cycles(self):
-        self.modification_state_changed.disconnect()
+        for x in ('modification_state_changed', 'word_ignored', 'link_clicked', 'smart_highlighting_updated'):
+            try:
+                getattr(self, x).disconnect()
+            except TypeError:
+                pass  # in case this signal was never connected
         self.undo_redo_state_changed.disconnect()
         self.copy_available_state_changed.disconnect()
         self.cursor_position_changed.disconnect()
@@ -262,6 +363,8 @@ class Editor(QMainWindow):
         self.editor.textChanged.disconnect()
         self.editor.copyAvailable.disconnect()
         self.editor.cursorPositionChanged.disconnect()
+        self.editor.link_clicked.disconnect()
+        self.editor.smart_highlighting_updated.disconnect()
         self.editor.setPlainText('')
         self.editor.smarts = None
 
@@ -338,22 +441,105 @@ class Editor(QMainWindow):
     def show_context_menu(self, pos):
         m = QMenu(self)
         a = m.addAction
+        c = self.editor.cursorForPosition(pos)
+        origc = QTextCursor(c)
+        r = origr = self.editor.syntax_range_for_cursor(c)
+        if (r is None or not r.format.property(SPELL_PROPERTY)) and c.positionInBlock() > 0:
+            c.setPosition(c.position() - 1)
+            r = self.editor.syntax_range_for_cursor(c)
+
+        if r is not None and r.format.property(SPELL_PROPERTY):
+            word = self.editor.text_for_range(c.block(), r)
+            locale = self.editor.spellcheck_locale_for_cursor(c)
+            orig_pos = c.position()
+            c.setPosition(orig_pos - utf16_length(word))
+            found = False
+            self.editor.setTextCursor(c)
+            if self.editor.find_spell_word([word], locale.langcode, center_on_cursor=False):
+                found = True
+                fc = self.editor.textCursor()
+                if fc.position() < c.position():
+                    self.editor.find_spell_word([word], locale.langcode, center_on_cursor=False)
+            if found:
+                suggestions = dictionaries.suggestions(word, locale)[:7]
+                if suggestions:
+                    for suggestion in suggestions:
+                        ac = m.addAction(suggestion, partial(self.editor.simple_replace, suggestion))
+                        f = ac.font()
+                        f.setBold(True), ac.setFont(f)
+                    m.addSeparator()
+                m.addAction(actions['spell-next'])
+                m.addAction(_('Ignore this word'), partial(self._nuke_word, None, word, locale))
+                dics = dictionaries.active_user_dictionaries
+                if len(dics) > 0:
+                    if len(dics) == 1:
+                        m.addAction(_('Add this word to the dictionary: {0}').format(dics[0].name), partial(
+                            self._nuke_word, dics[0].name, word, locale))
+                    else:
+                        ac = m.addAction(_('Add this word to the dictionary'))
+                        dmenu = QMenu(m)
+                        ac.setMenu(dmenu)
+                        for dic in dics:
+                            dmenu.addAction(dic.name, partial(self._nuke_word, dic.name, word, locale))
+                m.addSeparator()
+
+        if origr is not None and origr.format.property(LINK_PROPERTY):
+            href = self.editor.text_for_range(origc.block(), origr)
+            m.addAction(_('Open %s') % href, partial(self.link_clicked.emit, href))
+
+        if origr is not None and (origr.format.property(TAG_NAME_PROPERTY) or origr.format.property(CSS_PROPERTY)):
+            word = self.editor.text_for_range(origc.block(), origr)
+            item_type = 'tag_name' if origr.format.property(TAG_NAME_PROPERTY) else 'css_property'
+            url = help_url(word, item_type, self.editor.highlighter.doc_name, extra_data=current_container().opf_version)
+            if url is not None:
+                m.addAction(_('Show help for: %s') % word, partial(open_url, url))
+
         for x in ('undo', 'redo'):
-            a(actions['editor-%s' % x])
+            ac = actions['editor-%s' % x]
+            if ac.isEnabled():
+                a(ac)
         m.addSeparator()
         for x in ('cut', 'copy', 'paste'):
-            a(actions['editor-' + x])
+            ac = actions['editor-' + x]
+            if ac.isEnabled():
+                a(ac)
         m.addSeparator()
         m.addAction(_('&Select all'), self.editor.select_all)
-        m.addAction(actions['mark-selected-text'])
+        if self.selected_text or self.has_marked_text:
+            update_mark_text_action(self)
+            m.addAction(actions['mark-selected-text'])
+        if self.syntax != 'css' and actions['editor-cut'].isEnabled():
+            cm = QMenu(_('Change &case'), m)
+            for ac in 'upper lower swap title capitalize'.split():
+                cm.addAction(actions['transform-case-' + ac])
+            m.addMenu(cm)
         if self.syntax == 'html':
             m.addAction(actions['multisplit'])
         m.exec_(self.editor.mapToGlobal(pos))
 
+    def goto_sourceline(self, *args, **kwargs):
+        return self.editor.goto_sourceline(*args, **kwargs)
+
+    def goto_css_rule(self, *args, **kwargs):
+        return self.editor.goto_css_rule(*args, **kwargs)
+
+    def get_tag_contents(self, *args, **kwargs):
+        return self.editor.get_tag_contents(*args, **kwargs)
+
+    def _nuke_word(self, dic, word, locale):
+        if dic is None:
+            dictionaries.ignore_word(word, locale)
+        else:
+            dictionaries.add_to_user_dictionary(dic, word, locale)
+        self.word_ignored.emit(word, locale)
 
 def launch_editor(path_to_edit, path_is_raw=False, syntax='html'):
+    from calibre.gui2.tweak_book import dictionaries
     from calibre.gui2.tweak_book.main import option_parser
     from calibre.gui2.tweak_book.ui import Main
+    from calibre.gui2.tweak_book.editor.syntax.html import refresh_spell_check_status
+    dictionaries.initialize()
+    refresh_spell_check_status()
     opts = option_parser().parse_args([])
     app = QApplication([])
     # Create the actions that are placed into the editors toolbars

@@ -6,7 +6,7 @@ __license__   = 'GPL v3'
 __copyright__ = '2009, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
-from PyQt4.Qt import QDialog
+from PyQt5.Qt import QDialog
 
 from calibre.gui2.convert.font_key_ui import Ui_Dialog
 
@@ -19,7 +19,7 @@ class FontKeyChooser(QDialog, Ui_Dialog):
         self.default_font_key       = font_key
         self.default_base_font_size = base_font_size
         self.buttonBox.clicked.connect(self.button_clicked)
-        self.button_use_default.clicked[()].connect(self.use_default)
+        self.button_use_default.clicked.connect(self.use_default)
 
         for x in ('input_base_font_size', 'input_font_size',
                 'output_base_font_size'):
@@ -94,7 +94,8 @@ class FontKeyChooser(QDialog, Ui_Dialog):
 
 
 if __name__ == '__main__':
-    from calibre.gui2 import is_ok_to_use_qt
-    is_ok_to_use_qt()
+    from PyQt5.Qt import QApplication
+    app = QApplication([])
     d = FontKeyChooser()
     d.exec_()
+    del app

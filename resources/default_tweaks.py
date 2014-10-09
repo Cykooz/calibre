@@ -219,6 +219,10 @@ save_template_title_series_sorting = 'library_order'
 per_language_title_sort_articles = {
         # English
         'eng'  : (r'A\s+', r'The\s+', r'An\s+'),
+
+        # Esperanto
+        'epo': (r'La\s+', r"L'", 'L\xb4'),
+
         # Spanish
         'spa'  : (r'El\s+', r'La\s+', r'Lo\s+', r'Los\s+', r'Las\s+', r'Un\s+',
                   r'Una\s+', r'Unos\s+', r'Unas\s+'),
@@ -226,8 +230,11 @@ per_language_title_sort_articles = {
         'fra'  : (r'Le\s+', r'La\s+', r"L'", u'L´', r'Les\s+', r'Un\s+', r'Une\s+',
                   r'Des\s+', r'De\s+La\s+', r'De\s+', r"D'", u'D´'),
         # Italian
-        'ita'  : (r'Lo\s+', r'Il\s+', r"L'", r'La\s+', r'Gli\s+', r'I\s+',
-                  r'Le\s+', ),
+        'ita': ('Lo\\s+', 'Il\\s+', "L'", 'L\xb4', 'La\\s+', 'Gli\\s+',
+                'I\\s+', 'Le\\s+', 'Uno\\s+', 'Un\\s+', 'Una\\s+', "Un'",
+                'Un\xb4', 'Dei\\s+', 'Degli\\s+', 'Delle\\s+', 'Del\\s+',
+                'Della\\s+', 'Dello\\s+', "Dell'", 'Dell\xb4'),
+
         # Portuguese
         'por'  : (r'A\s+', r'O\s+', r'Os\s+', r'As\s+', r'Um\s+', r'Uns\s+',
                   r'Uma\s+', r'Umas\s+', ),
@@ -377,14 +384,6 @@ maximum_resort_levels = 5
 # the fields that are being displayed.
 sort_dates_using_visible_fields = False
 
-#: Specify which font to use when generating a default cover or masthead
-# Absolute path to .ttf font files to use as the fonts for the title, author
-# and footer when generating a default cover or masthead image. Useful if the
-# default font (Liberation Serif) does not contain glyphs for the language of
-# the books in your library.
-generate_cover_title_font = None
-generate_cover_foot_font = None
-
 #: Fuzz value for trimming covers
 # The value used for the fuzz distance when trimming a cover.
 # Colors within this distance are considered equal.
@@ -394,8 +393,8 @@ cover_trim_fuzz_value = 10
 #: Control behavior of the book list
 # You can control the behavior of doubleclicks on the books list.
 # Choices: open_viewer, do_nothing,
-# edit_cell, edit_metadata. Selecting edit_metadata has the side effect of
-# disabling editing a field using a single click.
+# edit_cell, edit_metadata. Selecting anything other than open_viewer has the
+# side effect of disabling editing a field using a single click.
 # Default: open_viewer.
 # Example: doubleclick_on_library_view = 'do_nothing'
 # You can also control whether the book list scrolls horizontal per column or

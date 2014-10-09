@@ -12,21 +12,44 @@ import re, codecs
 ENCODING_PATS = [
     # XML declaration
     re.compile(r'<\?[^<>]+encoding\s*=\s*[\'"](.*?)[\'"][^<>]*>', re.IGNORECASE),
-    # HTML 4 Pragma directive
-    re.compile(r'''<meta\s+?[^<>]*?content\s*=\s*['"][^'"]*?charset=([-_a-z0-9]+)[^'"]*?['"][^<>]*>(?:\s*</meta>){0,1}''', re.IGNORECASE),
     # HTML 5 charset
     re.compile(r'''<meta\s+charset=['"]([-_a-z0-9]+)['"][^<>]*>(?:\s*</meta>){0,1}''', re.IGNORECASE),
+    # HTML 4 Pragma directive
+    re.compile(r'''<meta\s+?[^<>]*?content\s*=\s*['"][^'"]*?charset=([-_a-z0-9]+)[^'"]*?['"][^<>]*>(?:\s*</meta>){0,1}''', re.IGNORECASE),
 ]
 ENTITY_PATTERN = re.compile(r'&(\S+?);')
 
-def strip_encoding_declarations(raw):
-    limit = 50*1024
+def strip_encoding_declarations(raw, limit=50*1024):
+    prefix = raw[:limit]
+    suffix = raw[limit:]
     for pat in ENCODING_PATS:
-        prefix = raw[:limit]
-        suffix = raw[limit:]
         prefix = pat.sub('', prefix)
-        raw = prefix + suffix
+    raw = prefix + suffix
     return raw
+
+def replace_encoding_declarations(raw, enc='utf-8', limit=50*1024):
+    prefix = raw[:limit]
+    suffix = raw[limit:]
+    changed = [False]
+    def sub(m):
+        ans = m.group()
+        if m.group(1).lower() != enc.lower():
+            changed[0] = True
+            start, end = m.start(1) - m.start(0), m.end(1) - m.end(0)
+            ans = ans[:start] + enc + ans[end:]
+        return ans
+
+    for pat in ENCODING_PATS:
+        prefix = pat.sub(sub, prefix)
+    raw = prefix + suffix
+    return raw, changed[0]
+
+def find_declared_encoding(raw, limit=50*1024):
+    prefix = raw[:limit]
+    for pat in ENCODING_PATS:
+        m = pat.search(prefix)
+        if m is not None:
+            return m.group(1)
 
 def substitute_entites(raw):
     from calibre import xml_entity_to_unicode

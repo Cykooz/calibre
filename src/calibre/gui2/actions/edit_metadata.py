@@ -8,7 +8,7 @@ __docformat__ = 'restructuredtext en'
 import os, shutil, copy
 from functools import partial
 
-from PyQt4.Qt import QMenu, QModelIndex, QTimer, QIcon
+from PyQt5.Qt import QMenu, QModelIndex, QTimer, QIcon
 
 from calibre.gui2 import error_dialog, Dispatcher, question_dialog, gprefs
 from calibre.gui2.dialogs.metadata_bulk import MetadataBulkDialog
@@ -18,6 +18,7 @@ from calibre.gui2.actions import InterfaceAction
 from calibre.ebooks.metadata import authors_to_string
 from calibre.ebooks.metadata.book.base import Metadata
 from calibre.ebooks.metadata.opf2 import OPF, metadata_to_opf
+from calibre.utils.date import is_date_undefined
 from calibre.utils.icu import sort_key
 from calibre.db.errors import NoSuchFormat
 from calibre.library.comments import merge_comments
@@ -516,6 +517,10 @@ class EditMetadataAction(InterfaceAction):
         orig_dest_comments = dest_mi.comments
         dest_cover = db.cover(dest_id, index_is_id=True)
         had_orig_cover = bool(dest_cover)
+
+        def is_null_date(x):
+            return x is None or is_date_undefined(x)
+
         for src_id in src_ids:
             src_mi = db.get_metadata(src_id, index_is_id=True)
 
@@ -547,6 +552,8 @@ class EditMetadataAction(InterfaceAction):
             if not dest_mi.series:
                 dest_mi.series = src_mi.series
                 dest_mi.series_index = src_mi.series_index
+            if is_null_date(dest_mi.pubdate) and not is_null_date(src_mi.pubdate):
+                dest_mi.pubdate = src_mi.pubdate
 
             src_identifiers = db.get_identifiers(src_id, index_is_id=True)
             src_identifiers.update(merged_identifiers)
@@ -583,7 +590,7 @@ class EditMetadataAction(InterfaceAction):
                 if (dt == 'series' and not dest_value and src_value):
                     src_index = db.get_custom_extra(src_id, num=colnum, index_is_id=True)
                     db.set_custom(dest_id, src_value, num=colnum, extra=src_index)
-                if (dt == 'enumeration' or (dt == 'text' and not fm['is_multiple']) and not dest_value):
+                if ((dt == 'enumeration' or (dt == 'text' and not fm['is_multiple'])) and not dest_value):
                     db.set_custom(dest_id, src_value, num=colnum)
                 if (dt == 'text' and fm['is_multiple'] and src_value):
                     if not dest_value:

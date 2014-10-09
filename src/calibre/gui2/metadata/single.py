@@ -10,11 +10,12 @@ __docformat__ = 'restructuredtext en'
 import os, errno
 from datetime import datetime
 
-from PyQt4.Qt import (Qt, QVBoxLayout, QHBoxLayout, QWidget, QPushButton,
+from PyQt5.Qt import (Qt, QVBoxLayout, QHBoxLayout, QWidget, QPushButton,
         QGridLayout, pyqtSignal, QDialogButtonBox, QScrollArea, QFont,
         QTabWidget, QIcon, QToolButton, QSplitter, QGroupBox, QSpacerItem,
         QSizePolicy, QFrame, QSize, QKeySequence, QMenu, QShortcut)
 
+from calibre.constants import isosx
 from calibre.ebooks.metadata import authors_to_string, string_to_authors
 from calibre.gui2 import ResizableDialog, error_dialog, gprefs, pixmap_to_data
 from calibre.gui2.metadata.basic_widgets import (TitleEdit, AuthorsEdit,
@@ -30,6 +31,9 @@ from calibre.utils.date import local_tz
 from calibre.library.comments import merge_comments as merge_two_comments
 
 BASE_TITLE = _('Edit Metadata')
+fetched_fields = ('title', 'title_sort', 'authors', 'author_sort', 'series',
+                  'series_index', 'languages', 'publisher', 'tags', 'rating',
+                  'comments', 'pubdate')
 
 class MetadataSingleDialogBase(ResizableDialog):
 
@@ -43,6 +47,7 @@ class MetadataSingleDialogBase(ResizableDialog):
         self.changed = set()
         self.books_to_refresh = set()
         self.rows_to_refresh = set()
+        self.metadata_before_fetch = None
         ResizableDialog.__init__(self, parent)
 
     def setupUi(self, *args):  # {{{
@@ -129,7 +134,18 @@ class MetadataSingleDialogBase(ResizableDialog):
               'change author sort from red to green.  There is a menu of '
               'functions available under this button. Click and hold '
               'on the button to see it.') + '</p>')
-        b.m = m = QMenu()
+        if isosx:
+            # Workaround for https://bugreports.qt-project.org/browse/QTBUG-41017
+            class Menu(QMenu):
+
+                def mouseReleaseEvent(self, ev):
+                    ac = self.actionAt(ev.pos())
+                    if ac is not None:
+                        ac.trigger()
+                    return QMenu.mouseReleaseEvent(self, ev)
+            b.m = m = Menu()
+        else:
+            b.m = m = QMenu()
         ac = m.addAction(QIcon(I('forward.png')), _('Set author sort from author'))
         ac2 = m.addAction(QIcon(I('back.png')), _('Set author from author sort'))
         ac3 = m.addAction(QIcon(I('user_profile.png')), _('Manage authors'))
@@ -220,9 +236,13 @@ class MetadataSingleDialogBase(ResizableDialog):
         self.pubdate = PubdateEdit(self)
         self.basic_metadata_widgets.extend([self.timestamp, self.pubdate])
 
-        self.fetch_metadata_button = QPushButton(
-                _('&Download metadata'), self)
+        self.fetch_metadata_button = b = QToolButton(self)
+        b.setText(_('&Download metadata')), b.setPopupMode(b.DelayedPopup)
+        b.setSizePolicy(QSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed))
         self.fetch_metadata_button.clicked.connect(self.fetch_metadata)
+        self.fetch_metadata_menu = m = QMenu(self.fetch_metadata_button)
+        m.addAction(QIcon(I('edit-undo.png')), _('Undo last metadata download'), self.undo_fetch_metadata)
+        self.fetch_metadata_button.setMenu(m)
         self.download_shortcut.activated.connect(self.fetch_metadata_button.click)
         font = self.fmb_font = QFont()
         font.setBold(True)
@@ -283,6 +303,7 @@ class MetadataSingleDialogBase(ResizableDialog):
     def __call__(self, id_):
         self.book_id = id_
         self.books_to_refresh = set([])
+        self.metadata_before_fetch = None
         for widget in self.basic_metadata_widgets:
             widget.initialize(self.db, id_)
         for widget in getattr(self, 'custom_metadata_widgets', []):
@@ -299,8 +320,7 @@ class MetadataSingleDialogBase(ResizableDialog):
             title = title[:50] + u'\u2026'
         self.setWindowTitle(BASE_TITLE + ' - ' +
                 title + ' - ' +
-                _(' [%(num)d of %(tot)d]')%dict(num=
-                    self.current_row+1,
+                _(' [%(num)d of %(tot)d]')%dict(num=self.current_row+1,
                 tot=len(self.row_list)))
 
     def swap_title_author(self, *args):
@@ -374,23 +394,24 @@ class MetadataSingleDialogBase(ResizableDialog):
             return
 
     def update_from_mi(self, mi, update_sorts=True, merge_tags=True, merge_comments=False):
+        fw = self.focusWidget()
         if not mi.is_null('title'):
-            self.title.current_val = mi.title
+            self.title.set_value(mi.title)
             if update_sorts:
                 self.title_sort.auto_generate()
         if not mi.is_null('authors'):
-            self.authors.current_val = mi.authors
+            self.authors.set_value(mi.authors)
         if not mi.is_null('author_sort'):
-            self.author_sort.current_val = mi.author_sort
+            self.author_sort.set_value(mi.author_sort)
         elif update_sorts:
             self.author_sort.auto_generate()
         if not mi.is_null('rating'):
             try:
-                self.rating.current_val = mi.rating
+                self.rating.set_value(mi.rating)
             except:
                 pass
         if not mi.is_null('publisher'):
-            self.publisher.current_val = mi.publisher
+            self.publisher.set_value(mi.publisher)
         if not mi.is_null('tags'):
             old_tags = self.tags.current_val
             tags = mi.tags if mi.tags else []
@@ -398,36 +419,39 @@ class MetadataSingleDialogBase(ResizableDialog):
                 ltags, lotags = {t.lower() for t in tags}, {t.lower() for t in
                         old_tags}
                 tags = [t for t in tags if t.lower() in ltags-lotags] + old_tags
-            self.tags.current_val = tags
+            self.tags.set_value(tags)
         if not mi.is_null('identifiers'):
             current = self.identifiers.current_val
             current.update(mi.identifiers)
-            self.identifiers.current_val = current
+            self.identifiers.set_value(current)
         if not mi.is_null('pubdate'):
-            self.pubdate.current_val = mi.pubdate
+            self.pubdate.set_value(mi.pubdate)
         if not mi.is_null('series') and mi.series.strip():
-            self.series.current_val = mi.series
+            self.series.set_value(mi.series)
             if mi.series_index is not None:
                 self.series_index.reset_original()
-                self.series_index.current_val = float(mi.series_index)
+                self.series_index.set_value(float(mi.series_index))
         if not mi.is_null('languages'):
             langs = [canonicalize_lang(x) for x in mi.languages]
             langs = [x for x in langs if x is not None]
             if langs:
-                self.languages.current_val = langs
+                self.languages.set_value(langs)
         if mi.comments and mi.comments.strip():
             val = mi.comments
             if val and merge_comments:
                 cval = self.comments.current_val
                 if cval:
                     val = merge_two_comments(cval, val)
-            self.comments.current_val = val
+            self.comments.set_value(val)
+        if fw is not None:
+            fw.setFocus(Qt.OtherFocusReason)
 
     def fetch_metadata(self, *args):
         d = FullFetch(self.cover.pixmap(), self)
         ret = d.start(title=self.title.current_val, authors=self.authors.current_val,
                 identifiers=self.identifiers.current_val)
         if ret == d.Accepted:
+            self.metadata_before_fetch = {f:getattr(self, f).current_val for f in fetched_fields}
             from calibre.ebooks.metadata.sources.prefs import msprefs
             mi = d.book
             dummy = Metadata(_('Unknown'))
@@ -445,7 +469,16 @@ class MetadataSingleDialogBase(ResizableDialog):
                             tzinfo=local_tz)
                 self.update_from_mi(mi, merge_comments=msprefs['append_comments'])
             if d.cover_pixmap is not None:
+                self.metadata_before_fetch['cover'] = self.cover.current_val
                 self.cover.current_val = pixmap_to_data(d.cover_pixmap)
+
+    def undo_fetch_metadata(self):
+        if self.metadata_before_fetch is None:
+            return error_dialog(self, _('No downloaded metadata'), _(
+                'There is no downloaded metadata to undo'), show=True)
+        for field, val in self.metadata_before_fetch.iteritems():
+            getattr(self, field).current_val = val
+        self.metadata_before_fetch = None
 
     def configure_metadata(self):
         from calibre.gui2.preferences import show_config_widget
@@ -464,6 +497,17 @@ class MetadataSingleDialogBase(ResizableDialog):
 
     # }}}
 
+    def to_book_metadata(self):
+        mi = Metadata(_('Unknown'))
+        if self.db is None:
+            return mi
+        mi.set_all_user_metadata(self.db.field_metadata.custom_field_metadata())
+        for widget in self.basic_metadata_widgets:
+            widget.apply_to_metadata(mi)
+        for widget in getattr(self, 'custom_metadata_widgets', []):
+            widget.apply_to_metadata(mi)
+        return mi
+
     def apply_changes(self):
         self.changed.add(self.book_id)
         if self.db is None:
@@ -472,10 +516,13 @@ class MetadataSingleDialogBase(ResizableDialog):
             return True
         for widget in self.basic_metadata_widgets:
             try:
-                if not widget.commit(self.db, self.book_id):
-                    return False
-                self.books_to_refresh |= getattr(widget, 'books_to_refresh',
-                        set([]))
+                if hasattr(widget, 'validate_for_commit'):
+                    title, msg, det_msg = widget.validate_for_commit()
+                    if title is not None:
+                        error_dialog(self, title, msg, det_msg=det_msg, show=True)
+                        return False
+                widget.commit(self.db, self.book_id)
+                self.books_to_refresh |= getattr(widget, 'books_to_refresh', set())
             except (IOError, OSError) as err:
                 if getattr(err, 'errno', None) == errno.EACCES:  # Permission denied
                     import traceback
@@ -566,6 +613,7 @@ class MetadataSingleDialogBase(ResizableDialog):
         # Break any reference cycles that could prevent python
         # from garbage collecting this dialog
         self.set_current_callback = self.db = None
+        self.metadata_before_fetch = None
         def disconnect(signal):
             try:
                 signal.disconnect()
@@ -1029,15 +1077,19 @@ def edit_metadata(db, row_list, current_row, parent=None, view_slot=None,
     if cls not in editors:
         cls = 'default'
     d = editors[cls](db, parent)
-    d.start(row_list, current_row, view_slot=view_slot,
-            set_current_callback=set_current_callback)
-    return d.changed, d.rows_to_refresh
+    try:
+        d.start(row_list, current_row, view_slot=view_slot,
+                set_current_callback=set_current_callback)
+        return d.changed, d.rows_to_refresh
+    finally:
+        # possible workaround for bug reports of occasional ghost edit metadata dialog on windows
+        d.deleteLater()
 
 if __name__ == '__main__':
     from calibre.gui2 import Application as QApplication
     app = QApplication([])
-    from calibre.library import db as db_
-    db = db_()
+    from calibre.library import db
+    db = db()
     row_list = list(range(len(db.data)))
     edit_metadata(db, row_list, 0)
 

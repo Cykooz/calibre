@@ -16,13 +16,13 @@ from operator import attrgetter
 from Queue import Queue, Empty
 from io import BytesIO
 
-from PyQt4.Qt import (
+from PyQt5.Qt import (
     QStyledItemDelegate, QTextDocument, QRectF, QIcon, Qt, QApplication,
     QDialog, QVBoxLayout, QLabel, QDialogButtonBox, QStyle, QStackedWidget,
     QWidget, QTableView, QGridLayout, QFontInfo, QPalette, QTimer, pyqtSignal,
-    QAbstractTableModel, QVariant, QSize, QListView, QPixmap, QModelIndex,
+    QAbstractTableModel, QSize, QListView, QPixmap, QModelIndex, QUrl,
     QAbstractListModel, QColor, QRect, QTextBrowser, QStringListModel, QMenu, QCursor)
-from PyQt4.QtWebKit import QWebView
+from PyQt5.QtWebKitWidgets import QWebView
 
 from calibre.customize.ui import metadata_plugins
 from calibre.ebooks.metadata import authors_to_string
@@ -30,7 +30,7 @@ from calibre.utils.logging import GUILog as Log
 from calibre.ebooks.metadata.sources.identify import urls_from_identifiers
 from calibre.ebooks.metadata.book.base import Metadata
 from calibre.ebooks.metadata.opf2 import OPF
-from calibre.gui2 import error_dialog, NONE, rating_font, gprefs
+from calibre.gui2 import error_dialog, rating_font, gprefs
 from calibre.utils.date import (utcnow, fromordinal, format_date,
         UNDEFINED_DATE, as_utc)
 from calibre.library.comments import comments_to_html
@@ -57,7 +57,7 @@ class RichTextDelegate(QStyledItemDelegate):  # {{{
             c = p.color(group, p.HighlightedText)
             c = 'rgb(%d, %d, %d)'%c.getRgb()[:3]
             doc.setDefaultStyleSheet(' * { color: %s }'%c)
-        doc.setHtml(index.data().toString())
+        doc.setHtml(index.data() or '')
         return doc
 
     def sizeHint(self, option, index):
@@ -131,7 +131,7 @@ class CoverDelegate(QStyledItemDelegate):  # {{{
     def paint(self, painter, option, index):
         QStyledItemDelegate.paint(self, painter, option, index)
         style = QApplication.style()
-        waiting = self.timer.isActive() and index.data(Qt.UserRole).toBool()
+        waiting = self.timer.isActive() and bool(index.data(Qt.UserRole))
         if waiting:
             rect = QRect(0, 0, self.spinner_width, self.spinner_width)
             rect.moveCenter(option.rect.center())
@@ -154,7 +154,7 @@ class ResultsModel(QAbstractTableModel):  # {{{
     def __init__(self, results, parent=None):
         QAbstractTableModel.__init__(self, parent)
         self.results = results
-        self.yes_icon = QVariant(QIcon(I('ok.png')))
+        self.yes_icon = (QIcon(I('ok.png')))
 
     def rowCount(self, parent=None):
         return len(self.results)
@@ -165,10 +165,10 @@ class ResultsModel(QAbstractTableModel):  # {{{
     def headerData(self, section, orientation, role):
         if orientation == Qt.Horizontal and role == Qt.DisplayRole:
             try:
-                return QVariant(self.COLUMNS[section])
+                return (self.COLUMNS[section])
             except:
-                return NONE
-        return NONE
+                return None
+        return None
 
     def data_as_text(self, book, col):
         if col == 0:
@@ -187,12 +187,12 @@ class ResultsModel(QAbstractTableModel):  # {{{
         try:
             book = self.results[row]
         except:
-            return NONE
+            return None
         if role == Qt.DisplayRole and col not in self.ICON_COLS:
             res = self.data_as_text(book, col)
             if res:
-                return QVariant(res)
-            return NONE
+                return (res)
+            return None
         elif role == Qt.DecorationRole and col in self.ICON_COLS:
             if col == 3 and getattr(book, 'has_cached_cover_url', False):
                 return self.yes_icon
@@ -201,13 +201,13 @@ class ResultsModel(QAbstractTableModel):  # {{{
         elif role == Qt.UserRole:
             return book
         elif role == Qt.ToolTipRole and col == 3:
-            return QVariant(
+            return (
                 _('The has cover indication is not fully\n'
                     'reliable. Sometimes results marked as not\n'
                     'having a cover will find a cover in the download\n'
                     'cover stage, and vice versa.'))
 
-        return NONE
+        return None
 
     def sort(self, col, order=Qt.AscendingOrder):
         key = lambda x: x
@@ -227,8 +227,9 @@ class ResultsModel(QAbstractTableModel):  # {{{
         elif key == 4:
             key = lambda x: bool(x.comments)
 
+        self.beginResetModel()
         self.results.sort(key=key, reverse=order==Qt.AscendingOrder)
-        self.reset()
+        self.endResetModel()
 
 # }}}
 
@@ -315,6 +316,18 @@ class ResultsView(QTableView):  # {{{
     def get_result(self):
         self.select_index(self.currentIndex())
 
+    def keyPressEvent(self, ev):
+        if ev.key() in (Qt.Key_Left, Qt.Key_Right):
+            ac = self.MoveDown if ev.key() == Qt.Key_Right else self.MoveUp
+            index = self.moveCursor(ac, ev.modifiers())
+            if index.isValid() and index != self.currentIndex():
+                m = self.selectionModel()
+                m.select(index, m.Select|m.Current|m.Rows)
+                self.setCurrentIndex(index)
+                ev.accept()
+                return
+        return QTableView.keyPressEvent(self, ev)
+
 # }}}
 
 class Comments(QWebView):  # {{{
@@ -335,7 +348,7 @@ class Comments(QWebView):  # {{{
 
     def link_clicked(self, url):
         from calibre.gui2 import open_url
-        if unicode(url.toString()).startswith('http://'):
+        if unicode(url.toString(QUrl.None)).startswith('http://'):
             open_url(url)
 
     def turnoff_scrollbar(self, *args):
@@ -475,9 +488,6 @@ class IdentifyWidget(QWidget):  # {{{
         self.results_view.show_details_signal.connect(self.comments_view.show_data)
 
         self.query = QLabel('download starting...')
-        f = self.query.font()
-        f.setPointSize(f.pointSize()-2)
-        self.query.setFont(f)
         self.query.setWordWrap(True)
         l.addWidget(self.query, 2, 0, 1, 2)
 
@@ -505,15 +515,19 @@ class IdentifyWidget(QWidget):  # {{{
     def start(self, title=None, authors=None, identifiers={}):
         self.log.clear()
         self.log('Starting download')
-        parts = []
+        parts, simple_desc = [], ''
         if title:
             parts.append('title:'+title)
+            simple_desc += _('Title: %s ') % title
         if authors:
             parts.append('authors:'+authors_to_string(authors))
+            simple_desc += _('Authors: %s ') % authors_to_string(authors)
         if identifiers:
             x = ', '.join('%s:%s'%(k, v) for k, v in identifiers.iteritems())
             parts.append(x)
-        self.query.setText(_('Query: ')+'; '.join(parts))
+            if 'isbn' in identifiers:
+                simple_desc += ' ISBN: %s' % identifiers['isbn']
+        self.query.setText(simple_desc)
         self.log(unicode(self.query.text()))
 
         self.worker = IdentifyWorker(self.log, self.abort, title,
@@ -653,18 +667,18 @@ class CoversModel(QAbstractListModel):  # {{{
         self.plugin_map = {}
         for i, plugin in enumerate(metadata_plugins(['cover'])):
             self.covers.append((plugin.name+'\n'+_('Searching...'),
-                QVariant(self.blank), None, True))
+                (self.blank), None, True))
             self.plugin_map[plugin] = [i+1]
 
         if do_reset:
-            self.reset()
+            self.beginResetModel(), self.endResetModel()
 
     def get_item(self, src, pmap, waiting=False):
         sz = '%dx%d'%(pmap.width(), pmap.height())
-        text = QVariant(src + '\n' + sz)
+        text = (src + '\n' + sz)
         scaled = pmap.scaled(150, 200, Qt.IgnoreAspectRatio,
                 Qt.SmoothTransformation)
-        return (text, QVariant(scaled), pmap, waiting)
+        return (text, (scaled), pmap, waiting)
 
     def rowCount(self, parent=None):
         return len(self.covers)
@@ -673,14 +687,14 @@ class CoversModel(QAbstractListModel):  # {{{
         try:
             text, pmap, cover, waiting = self.covers[index.row()]
         except:
-            return NONE
+            return None
         if role == Qt.DecorationRole:
             return pmap
         if role == Qt.DisplayRole:
             return text
         if role == Qt.UserRole:
             return waiting
-        return NONE
+        return None
 
     def plugin_for_index(self, index):
         row = index.row() if hasattr(index, 'row') else index
@@ -710,7 +724,7 @@ class CoversModel(QAbstractListModel):  # {{{
                         pmap[plugin] = [len(good)-1]
         self.covers = good
         self.plugin_map = pmap
-        self.reset()
+        self.beginResetModel(), self.endResetModel()
 
     def pointer_from_index(self, index):
         row = index.row() if hasattr(index, 'row') else index
@@ -819,7 +833,7 @@ class CoversView(QListView):  # {{{
 
     def show_context_menu(self, point):
         idx = self.currentIndex()
-        if idx and idx.isValid() and not idx.data(Qt.UserRole).toPyObject():
+        if idx and idx.isValid() and not idx.data(Qt.UserRole):
             m = QMenu()
             m.addAction(QIcon(I('view.png')), _('View this cover at full size'), self.show_cover)
             m.addAction(QIcon(I('edit-copy.png')), _('Copy this cover to clipboard'), self.copy_cover)
@@ -832,7 +846,7 @@ class CoversView(QListView):  # {{{
             pmap = self.model().cc
         if pmap is not None:
             from calibre.gui2.viewer.image_popup import ImageView
-            d = ImageView(self, pmap, unicode(idx.data(Qt.DisplayRole).toString()), geom_name='metadata_download_cover_popup_geom')
+            d = ImageView(self, pmap, unicode(idx.data(Qt.DisplayRole) or ''), geom_name='metadata_download_cover_popup_geom')
             d(use_exec=True)
 
     def copy_cover(self):
@@ -842,6 +856,13 @@ class CoversView(QListView):  # {{{
             pmap = self.model().cc
         if pmap is not None:
             QApplication.clipboard().setPixmap(pmap)
+
+    def keyPressEvent(self, ev):
+        if ev.key() in (Qt.Key_Enter, Qt.Key_Return):
+            self.chosen.emit()
+            ev.accept()
+            return
+        return QListView.keyPressEvent(self, ev)
 
 # }}}
 

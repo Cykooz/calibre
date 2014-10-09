@@ -23,7 +23,7 @@ def available_translations():
     return _available_translations
 
 def get_system_locale():
-    from calibre.constants import iswindows
+    from calibre.constants import iswindows, isosx, plugins
     lang = None
     if iswindows:
         try:
@@ -34,6 +34,13 @@ def get_system_locale():
                 lang = None
         except:
             pass  # Windows XP does not have the GetUserDefaultLocaleName fn
+    elif isosx:
+        try:
+            lang = plugins['usbobserver'][0].user_locale() or None
+        except:
+            # Fallback to environment vars if something bad happened
+            import traceback
+            traceback.print_exc()
     if lang is None:
         try:
             lang = locale.getdefaultlocale(['LANGUAGE', 'LC_ALL', 'LC_CTYPE',
@@ -177,9 +184,9 @@ _extra_lang_codes = {
         'pt_BR' : _('Brazilian Portuguese'),
         'en_GB' : _('English (UK)'),
         'zh_CN' : _('Simplified Chinese'),
-        'zh_HK' : _('Chinese (HK)'),
         'zh_TW' : _('Traditional Chinese'),
         'en'    : _('English'),
+        'en_US' : _('English (United States)'),
         'en_AR' : _('English (Argentina)'),
         'en_AU' : _('English (Australia)'),
         'en_JP' : _('English (Japan)'),
@@ -199,7 +206,6 @@ _extra_lang_codes = {
         'en_PK' : _('English (Pakistan)'),
         'en_PL' : _('English (Poland)'),
         'en_HR' : _('English (Croatia)'),
-        'en_HK' : _('English (Hong Kong)'),
         'en_HU' : _('English (Hungary)'),
         'en_ID' : _('English (Indonesia)'),
         'en_IL' : _('English (Israel)'),
@@ -256,15 +262,6 @@ if False:
     _('Fonts')
     _('&Step up')
     _('Step &down')
-    _('Basic colors')
-    _('Custom colors')
-    _('&Add to Custom Colors')
-    _('Hu&e')
-    _('&Sat')
-    _('&Val')
-    _('&Red')
-    _('&Green')
-    _('Bl&ue')
 
 _lcase_map = {}
 for k in _extra_lang_codes:

@@ -7,7 +7,7 @@ __docformat__ = 'restructuredtext en'
 
 from functools import partial
 
-from PyQt4.Qt import (QIcon, Qt, QWidget, QSize,
+from PyQt5.Qt import (QIcon, Qt, QWidget, QSize,
     pyqtSignal, QToolButton, QMenu, QAction,
     QObject, QVBoxLayout, QSizePolicy, QLabel, QHBoxLayout, QActionGroup)
 
@@ -267,7 +267,10 @@ class Spacer(QWidget):  # {{{
 
 class MainWindowMixin(object):  # {{{
 
-    def __init__(self, db):
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def init_main_window_mixin(self, db):
         self.setObjectName('MainWindow')
         self.setWindowIcon(QIcon(I('lt.png')))
         self.setWindowTitle(__appname__)
@@ -294,7 +297,10 @@ class MainWindowMixin(object):  # {{{
         # This is disabled because it introduces various toolbar related bugs
         # The width of the toolbar becomes the sum of both toolbars
         if tweaks['unified_title_toolbar_on_osx']:
-            self.setUnifiedTitleAndToolBarOnMac(True)
+            try:
+                self.setUnifiedTitleAndToolBarOnMac(True)
+            except AttributeError:
+                pass  # PyQt5 seems to be missing this property
 
         l = self.centralwidget.layout()
         l.addWidget(self.search_bar)

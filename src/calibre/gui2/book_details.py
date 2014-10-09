@@ -5,11 +5,13 @@ __license__   = 'GPL v3'
 __copyright__ = '2010, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
-from PyQt4.Qt import (QPixmap, QSize, QWidget, Qt, pyqtSignal, QUrl, QIcon,
+from binascii import unhexlify
+
+from PyQt5.Qt import (QPixmap, QSize, QWidget, Qt, pyqtSignal, QUrl, QIcon,
     QPropertyAnimation, QEasingCurve, QApplication, QFontInfo, QAction,
     QSizePolicy, QPainter, QRect, pyqtProperty, QLayout, QPalette, QMenu,
     QPen, QColor)
-from PyQt4.QtWebKit import QWebView
+from PyQt5.QtWebKitWidgets import QWebView
 
 from calibre import fit_image
 from calibre.gui2.dnd import (dnd_has_image, dnd_get_image, dnd_get_files,
@@ -291,6 +293,7 @@ class BookInfo(QWebView):
             ac.current_url = None
             ac.triggered.connect(getattr(self, '%s_triggerred'%x))
             setattr(self, '%s_action'%x, ac)
+        self.setFocusPolicy(Qt.NoFocus)
 
     def context_action_triggered(self, which):
         f = getattr(self, '%s_action'%which).current_fmt
@@ -323,7 +326,7 @@ class BookInfo(QWebView):
         self._link_clicked = True
         if unicode(link.scheme()) in ('http', 'https'):
             return open_url(link)
-        link = unicode(link.toString())
+        link = unicode(link.toString(QUrl.None))
         self.link_clicked.emit(link)
 
     def turnoff_scrollbar(self, *args):
@@ -347,7 +350,7 @@ class BookInfo(QWebView):
         p = self.page()
         mf = p.mainFrame()
         r = mf.hitTestContent(ev.pos())
-        url = unicode(r.linkUrl().toString()).strip()
+        url = unicode(r.linkUrl().toString(QUrl.None)).strip()
         menu = p.createStandardContextMenu()
         ca = self.pageAction(p.Copy)
         for action in list(menu.actions()):
@@ -500,6 +503,7 @@ class BookDetails(QWidget):  # {{{
     show_book_info = pyqtSignal()
     open_containing_folder = pyqtSignal(int)
     view_specific_format = pyqtSignal(int, object)
+    search_requested = pyqtSignal(object)
     remove_specific_format = pyqtSignal(int, object)
     save_specific_format = pyqtSignal(int, object)
     restore_specific_format = pyqtSignal(int, object)
@@ -581,7 +585,7 @@ class BookDetails(QWidget):  # {{{
         self.setCursor(Qt.PointingHandCursor)
 
     def handle_click(self, link):
-        typ, _, val = link.partition(':')
+        typ, val = link.partition(':')[0::2]
         if typ == 'path':
             self.open_containing_folder.emit(int(val))
         elif typ == 'format':
@@ -589,6 +593,8 @@ class BookDetails(QWidget):  # {{{
             self.view_specific_format.emit(int(id_), fmt)
         elif typ == 'devpath':
             self.view_device_book.emit(val)
+        elif typ == 'search':
+            self.search_requested.emit(unhexlify(val).decode('utf-8'))
         else:
             try:
                 open_url(QUrl(link, QUrl.TolerantMode))

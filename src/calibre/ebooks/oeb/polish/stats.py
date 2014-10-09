@@ -11,10 +11,11 @@ import json, sys, os, logging
 from urllib import unquote
 from collections import defaultdict
 
+import regex
 from cssutils import CSSParser
-from PyQt4.Qt import (pyqtProperty, QString, QEventLoop, Qt, QSize, QTimer,
+from PyQt5.Qt import (pyqtProperty, QEventLoop, Qt, QSize, QTimer,
                       pyqtSlot)
-from PyQt4.QtWebKit import QWebPage, QWebView
+from PyQt5.QtWebKitWidgets import QWebPage, QWebView
 
 from calibre.constants import iswindows
 from calibre.ebooks.oeb.display.webview import load_html
@@ -101,6 +102,31 @@ def get_matching_rules(rules, font):
             return m
     return []
 
+def parse_font_families(parser, raw):
+    style = parser.parseStyle('font-family:' + raw, validate=False).getProperty('font-family')
+    for x in style.propertyValue:
+        x = x.value
+        if x:
+            yield x
+
+def get_pseudo_element_font_usage(pseudo_element_font_usage, first_letter_pat, parser):
+    ans = []
+    for font_dict, text, pseudo in pseudo_element_font_usage:
+        text = text.strip()
+        if pseudo == 'first-letter':
+            prefix = first_letter_pat.match(text)
+            if prefix is not None:
+                text = prefix + text[len(prefix):].lstrip()[:1]
+            else:
+                text = text[:1]
+        if text:
+            font = font_dict.copy()
+            font['text'] = text
+            font['font-family'] = list(parse_font_families(parser, font['font-family']))
+            ans.append(font)
+
+    return ans
+
 class Page(QWebPage):  # {{{
 
     def __init__(self, log):
@@ -130,12 +156,14 @@ class Page(QWebPage):  # {{{
 
     def _pass_json_value_getter(self):
         val = json.dumps(self.bridge_value)
-        return QString(val)
+        return val
 
     def _pass_json_value_setter(self, value):
-        self.bridge_value = json.loads(unicode(value))
+        # Qt WebKit in Qt 4.x adds extra null bytes to the end of the string
+        # if the JSON contains non-BMP characters
+        self.bridge_value = json.loads(unicode(value).rstrip('\0'))
 
-    _pass_json_value = pyqtProperty(QString, fget=_pass_json_value_getter,
+    _pass_json_value = pyqtProperty(str, fget=_pass_json_value_getter,
             fset=_pass_json_value_setter)
 
     def load_js(self):
@@ -147,11 +175,9 @@ class Page(QWebPage):  # {{{
         self.mainFrame().addToJavaScriptWindowObject("py_bridge", self)
         self.evaljs(self.js)
         self.evaljs('''
-        py_bridge.__defineGetter__('value', function() {
-            return JSON.parse(this._pass_json_value);
-        });
-        py_bridge.__defineSetter__('value', function(val) {
-            this._pass_json_value = JSON.stringify(val);
+        Object.defineProperty(py_bridge, 'value', {
+               get : function() { return JSON.parse(this._pass_json_value); },
+               set : function(val) { this._pass_json_value = JSON.stringify(val); }
         });
         ''')
 # }}}
@@ -164,6 +190,7 @@ class StatsCollector(object):
         self.do_embed = do_embed
         must_use_qt()
         self.parser = CSSParser(loglevel=logging.CRITICAL, log=logging.getLogger('calibre.css'))
+        self.first_letter_pat = regex.compile(r'^[\p{Ps}\p{Ps}\p{Pe}\p{Pi}\p{Pf}\p{Po}]+', regex.VERSION1 | regex.UNICODE)
 
         self.loop = QEventLoop()
         self.view = QWebView()
@@ -186,6 +213,14 @@ class StatsCollector(object):
         if self.loop.exec_() == 1:
             raise Exception('Failed to gather statistics from book, see log for details')
 
+    def log_exception(self, *args):
+        orig = self.log.filter_level
+        try:
+            self.log.filter_level = self.log.DEBUG
+            self.log.exception(*args)
+        finally:
+            self.log.filter_level = orig
+
     def render_book(self):
         try:
             if not self.render_queue:
@@ -193,7 +228,7 @@ class StatsCollector(object):
             else:
                 self.render_next()
         except:
-            self.logger.exception('Rendering failed')
+            self.log_exception('Rendering failed')
             self.loop.exit(1)
 
     def render_next(self):
@@ -210,7 +245,7 @@ class StatsCollector(object):
             self.page.load_js()
             self.collect_font_stats()
         except:
-            self.log.exception('Failed to collect font stats from: %s'%self.container.relpath(self.current_item))
+            self.log_exception('Failed to collect font stats from: %s'%self.container.relpath(self.current_item))
             self.loop.exit(1)
             return
 
@@ -253,6 +288,10 @@ class StatsCollector(object):
             src = rule.get('src', None)
             if not src:
                 continue
+            if src.startswith('url(') and src.endswith(')') and src[4] not in {'"', "'"}:
+                # Quote the url otherwise cssutils fails to parse it if it has
+                # ' or " in it
+                src = "url('" + src[4:-1].replace("'", "\\'") + "')"
             style = self.parser.parseStyle('background-image:%s'%src, validate=False)
             src = style.getProperty('background-image').propertyValue[0].uri
             name = self.href_to_name(src, '@font-face rule')
@@ -279,6 +318,11 @@ class StatsCollector(object):
         font_usage = self.page.bridge_value
         if not isinstance(font_usage, list):
             raise Exception('Unknown error occurred while reading font usage')
+        self.page.evaljs('window.font_stats.get_pseudo_element_font_usage()')
+        pseudo_element_font_usage = self.page.bridge_value
+        if not isinstance(pseudo_element_font_usage, list):
+            raise Exception('Unknown error occurred while reading pseudo element font usage')
+        font_usage += get_pseudo_element_font_usage(pseudo_element_font_usage, self.first_letter_pat, self.parser)
         exclude = {'\n', '\r', '\t'}
         self.font_usage_map[self.container.abspath_to_name(self.current_item)] = fu = defaultdict(dict)
         bad_fonts = {'serif', 'sans-serif', 'monospace', 'cursive', 'fantasy', 'sansserif', 'inherit'}
@@ -310,11 +354,11 @@ class StatsCollector(object):
             if not isinstance(font_families, dict):
                 raise Exception('Unknown error occurred while reading font families')
             self.font_spec_map[self.container.abspath_to_name(self.current_item)] = fs = set()
+            for font_dict, text, pseudo in pseudo_element_font_usage:
+                font_families[font_dict['font-family']] = True
             for raw in font_families.iterkeys():
-                style = self.parser.parseStyle('font-family:' + raw, validate=False).getProperty('font-family')
-                for x in style.propertyValue:
-                    x = x.value
-                    if x and x.lower() not in bad_fonts:
+                for x in parse_font_families(self.parser, raw):
+                    if x.lower() not in bad_fonts:
                         fs.add(x)
 
 if __name__ == '__main__':
@@ -323,5 +367,3 @@ if __name__ == '__main__':
     default_log.filter_level = default_log.DEBUG
     ebook = get_container(sys.argv[-1], default_log)
     print (StatsCollector(ebook, do_embed=True).font_stats)
-
-

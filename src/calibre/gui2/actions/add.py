@@ -9,11 +9,11 @@ import os
 from functools import partial
 from collections import defaultdict
 
-from PyQt4.Qt import QPixmap, QTimer
+from PyQt5.Qt import QPixmap, QTimer
 
 from calibre import as_unicode
 from calibre.gui2 import (error_dialog, choose_files, choose_dir,
-        warning_dialog, info_dialog)
+        warning_dialog, info_dialog, gprefs)
 from calibre.gui2.dialogs.add_empty_book import AddEmptyBookDialog
 from calibre.gui2.dialogs.confirm_delete import confirm
 from calibre.gui2.dialogs.progress import ProgressDialog
@@ -25,6 +25,7 @@ from calibre.constants import filesystem_encoding
 from calibre.gui2.actions import InterfaceAction
 from calibre.gui2 import question_dialog
 from calibre.ebooks.metadata import MetaInformation
+from calibre.ptempfile import PersistentTemporaryFile
 
 def get_filters():
     return [
@@ -106,7 +107,7 @@ class AddAction(InterfaceAction):
         ids = [view.model().id(r) for r in rows]
 
         if len(ids) > 1 and not question_dialog(self.gui,
-                _('Are you sure'),
+                _('Are you sure?'),
             _('Are you sure you want to add the same'
                 ' files to all %d books? If the format'
                 ' already exists for a book, it will be replaced.')%len(ids)):
@@ -128,7 +129,7 @@ class AddAction(InterfaceAction):
                     title = db.title(ids[0], index_is_id=True)
                     msg = _('The {0} format(s) will be replaced in the book {1}. Are you sure?').format(
                         ', '.join(override), title)
-                    if not confirm(msg, 'confirm_format_override_on_add', title=_('Are you sure'), parent=self.gui):
+                    if not confirm(msg, 'confirm_format_override_on_add', title=_('Are you sure?'), parent=self.gui):
                         return
 
         for id_ in ids:
@@ -194,6 +195,7 @@ class AddAction(InterfaceAction):
         dlg = AddEmptyBookDialog(self.gui, self.gui.library_view.model().db,
                                  author, series)
         if dlg.exec_() == dlg.Accepted:
+            temp_files = []
             num = dlg.qty_to_add
             series = dlg.selected_series
             db = self.gui.library_view.model().db
@@ -203,14 +205,24 @@ class AddAction(InterfaceAction):
                 if series:
                     mi.series = series
                     mi.series_index = db.get_next_series_num_for(series)
-                ids.append(db.import_book(mi, []))
+                fmts = []
+                if gprefs.get('create_empty_epub_file', False):
+                    from calibre.ebooks.oeb.polish.create import create_book
+                    pt = PersistentTemporaryFile(suffix='.epub')
+                    pt.close()
+                    temp_files.append(pt.name)
+                    create_book(mi, pt.name)
+                    fmts = [pt.name]
+                ids.append(db.import_book(mi, fmts))
             self.gui.library_view.model().books_added(num)
             if hasattr(self.gui, 'db_images'):
-                self.gui.db_images.reset()
+                self.gui.db_images.beginResetModel(), self.gui.db_images.endResetModel()
             self.gui.tags_view.recount()
             if ids:
                 ids.reverse()
                 self.gui.library_view.select_rows(ids)
+            for path in temp_files:
+                os.remove(path)
 
     def add_isbns(self, books, add_tags=[]):
         self.isbn_books = list(books)
@@ -372,7 +384,7 @@ class AddAction(InterfaceAction):
             self.gui.library_view.model().books_added(self._adder.number_of_books_added)
             self.gui.library_view.set_current_row(0)
             if hasattr(self.gui, 'db_images'):
-                self.gui.db_images.reset()
+                self.gui.db_images.beginResetModel(), self.gui.db_images.endResetModel()
             self.gui.tags_view.recount()
 
         if getattr(self._adder, 'merged_books', False):

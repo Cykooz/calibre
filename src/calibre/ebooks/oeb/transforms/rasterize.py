@@ -8,15 +8,10 @@ __copyright__ = '2008, Marshall T. Vandegrift <llasram@gmail.com>'
 
 import os, re
 from urlparse import urldefrag
+
 from lxml import etree
-from PyQt4.QtCore import Qt
-from PyQt4.QtCore import QByteArray
-from PyQt4.QtCore import QBuffer
-from PyQt4.QtCore import QIODevice
-from PyQt4.QtGui import QColor
-from PyQt4.QtGui import QImage
-from PyQt4.QtGui import QPainter
-from PyQt4.QtSvg import QSvgRenderer
+from PyQt5.Qt import (
+    Qt, QByteArray, QBuffer, QIODevice, QColor, QImage, QPainter, QSvgRenderer)
 from calibre.ebooks.oeb.base import XHTML, XLINK
 from calibre.ebooks.oeb.base import SVG_MIME, PNG_MIME
 from calibre.ebooks.oeb.base import xml2str, xpath
@@ -33,9 +28,8 @@ class Unavailable(Exception):
 
 class SVGRasterizer(object):
     def __init__(self):
-        from calibre.gui2 import is_ok_to_use_qt
-        if not is_ok_to_use_qt():
-            raise Unavailable('Not OK to use Qt')
+        from calibre.gui2 import must_use_qt
+        must_use_qt()
 
     @classmethod
     def config(cls, cfg):

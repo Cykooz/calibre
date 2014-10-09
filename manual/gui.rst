@@ -1,5 +1,3 @@
-.. include:: global.rst
-
 .. _gui:
 
 The Graphical User Interface
@@ -55,11 +53,11 @@ Add books
 
     4. **Add multiple books from archive (ZIP/RAR)**: Allows you to add multiple ebooks that are stored inside a single ZIP or RAR file. It is a convenient shortcut that avoids having to first unzip the archive and then add the books via one of the above two options.
 
-    4. **Add empty book. (Book Entry with no formats)**: Allows you to create a blank book record. This can be used to then manually fill out the information about a book that you may not have yet in your collection.
+    5. **Add empty book. (Book Entry with no formats)**: Allows you to create a blank book record. This can be used to then manually fill out the information about a book that you may not have yet in your collection.
 
-    5. **Add from ISBN**: Allows you to add one or more books by entering their ISBNs.
+    6. **Add from ISBN**: Allows you to add one or more books by entering their ISBNs.
 
-    6. **Add files to selected book records**: Allows you to add or update the files associated with an existing book in your library.
+    7. **Add files to selected book records**: Allows you to add or update the files associated with an existing book in your library.
 
 The :guilabel:`Add books` action can read metadata from a wide variety of ebook formats. In addition, it tries to guess metadata from the filename.
 See the :ref:`config_filename_metadata` section, to learn how to configure this.
@@ -68,7 +66,7 @@ To add an additional format for an existing book you can do any of three things:
 
     1. Drag and drop the file onto the book details panel on the right side of the main window
            
-    2. Right click the Add books button and choose :guilabel`:Add files to selected books`.
+    2. Right click the Add books button and choose :guilabel:`Add files to selected books`.
            
     3. Click the red add books button in the top right area of the :guilabel:`Edit Metadata` dialog, accessed by the :ref:`edit_meta_information` action.
 
@@ -182,7 +180,7 @@ Library
     5. **<library name>**: Actions 5, 6 etc... give you immediate switch access between multiple libraries that you have created or attached to. This list contains only the 5 most frequently used libraries. For the complete list, use the Quick Switch menu.
     6. **Library maintenance**: Allows you to check the current library for data consistency issues and restore the current library's database from backups.
 
-.. note:: Metadata about your ebooks, e.g. title, author, and tags, is stored in a single file in your |app| library folder called metadata.db. If this file gets corrupted (a very rare event), you can lose the metadata. Fortunately, |app| automatically backs up the metadata for every individual book in the book's folder as an OPF file. By using the Restore Library action under Library Maintenance described above, you can have |app| rebuild the metadata.db file from the individual OPF files for you.
+.. note:: Metadata about your ebooks, e.g. title, author, and tags, is stored in a single file in your |app| library folder called metadata.db. If this file gets corrupted (a very rare event), you can lose the metadata. Fortunately, |app| automatically backs up the metadata for every individual book in the book's folder as an OPF file. By using the Restore database action under Library Maintenance described above, you can have |app| rebuild the metadata.db file from the individual OPF files for you.
 
 You can copy or move books between different libraries (once you have more than one library setup) by right clicking on the book and selecting the action :guilabel:`Copy to library`.
 
@@ -263,11 +261,11 @@ Remove books
 
     3. **Remove all formats from selected books, except...**: Allows you to **permanently** remove ebook files of any format except a specified format from books that are selected in the book list.
 
-    3. **Remove all formats from selected books**: Allows you to **permanently** remove all ebook files from books that are selected in the book list. Only the metadata will remain.
+    4. **Remove all formats from selected books**: Allows you to **permanently** remove all ebook files from books that are selected in the book list. Only the metadata will remain.
 
-    4. **Remove covers from selected books**: Allows you to **permanently** remove cover image files from books that are selected in the book list.
+    5. **Remove covers from selected books**: Allows you to **permanently** remove cover image files from books that are selected in the book list.
 
-    5. **Remove matching books from device**: Allows you to remove ebook files from a connected device that match the books that are selected in the book list.
+    6. **Remove matching books from device**: Allows you to remove ebook files from a connected device that match the books that are selected in the book list.
 
 .. note::
     Note that when you use Remove books to delete books from your |app| library, the book record is permanently deleted, but on Windows and OS X the files are placed into the recycle bin. This allows you to recover them if you change your mind.
@@ -472,14 +470,39 @@ will be interpreted to have the title: Foundation and Earth and author: Isaac As
 
 .. _book_details:
 
+
 Book Details
 -------------
 .. image:: images/book_details.png
-    :align: center
+   :class: float-left-img
 
-The Book Details display shows extra information and the cover for the currently selected book.
+The Book Details display shows the cover and all the metadata for the currently
+selected book. It can be hidden via the button in the lower right corner of the
+main |app| window. The author names shown in the Book Detail panel are
+clickable, they will by default take you to the Wikipedia page for the author.
+This can be customized by right clicking on the author name and selecting
+Manage this author.
 
-.. _jobs:
+Similarly, if you download metadata for the book, the Book details panel will
+automatically show you links pointing to the web pages for the book on amazon,
+worldcat, etc. from where the metadata was downloaded.
+
+You can right click on individual ebook formats in the Book Details panel to
+delete them, compare them to their original versions, save them to disk, etc.
+
+You can change the cover of the book by simply drag and dropping an
+image onto the book details panel. You can also add ebook files to the current
+book by drag and dropping the files onto the book details panel.
+
+Double clicking the book details panel will open it up in a separate popup
+window.
+
+Finally, you can customize exactly what information is displayed in the Book
+Details panel via :guilabel:`Preferences->Look & Feel->Book Details`.
+
+.. raw:: html epub
+    
+    <div style="clear:both"></div>
 
 .. _tag_browser:
 
@@ -494,7 +517,7 @@ The first click on an item will restrict the list of books to those that contain
 
 Items in the Tag browser have their icons partially colored. The amount of color depends on the average rating of the books in that category. So for example if the books by Isaac Asimov have an average of four stars, the icon for Isaac Asimov in the Tag Browser will be 4/5th colored. You can hover your mouse over the icon to see the average rating.
 
-The outer-level items in the tag browser, such as Authors and Series, are called categories. You can create your own categories, called User Categories, which are useful for organizing items. For example, you can use the User Categories Editor (click the Manage User Categories button) to create a user category called Favorite Authors, then put the items for your favorites into the category. User categories can have sub-categories. For example, the user category Favorites.Authors is a sub-category of Favorites. You might also have Favorites.Series, in which case there will be two sub-categories under Favorites. Sub-categories can be created by right-clicking on a user category, choosing "Add sub-category to ...", and entering the sub-category name; or by using the User Categories Editor by entering names like the Favorites example above.
+The outer-level items in the tag browser, such as Authors and Series, are called categories. You can create your own categories, called User Categories, which are useful for organizing items. For example, you can use the User Categories Editor (click :guilabel:`Alter Tag Browser->Manage authors, series, etc->Manage User Categories`) to create a user category called Favorite Authors, then put the items for your favorites into the category. User categories can have sub-categories. For example, the user category Favorites.Authors is a sub-category of Favorites. You might also have Favorites.Series, in which case there will be two sub-categories under Favorites. Sub-categories can be created by right-clicking on a user category, choosing "Add sub-category to ...", and entering the sub-category name; or by using the User Categories Editor by entering names like the Favorites example above.
 
 You can search user categories in the same way as built-in categories, by clicking on them. There are four different searches cycled through by clicking:
     1. "everything matching an item in the category" indicated by a single green plus sign.
@@ -510,7 +533,37 @@ You can drag and drop items in the Tag browser onto user categories to add them 
 
 There is a search bar at the top of the Tag Browser that allows you to easily find any item in the Tag Browser. In addition, you can right click on any item and choose one of several operations. Some examples are to hide the it, rename it, or open a "Manage x" dialog that allows you to manage items of that kind. For example, the "Manage Authors" dialog allows you to rename authors and control how their names are sorted.
 
-You can control how items are sorted in the Tag browser via the box at the bottom of the Tag Browser. You can choose to sort by name, average rating or popularity (popularity is the number of books with an item in your library; for example, the popularity of Isaac Asimov is the number of books in your library by Isaac Asimov).
+You can control how items are sorted in the Tag browser via the :guilabel:`Alter Tag Browser` button at the bottom of the Tag Browser. You can choose to sort by name, average rating or popularity (popularity is the number of books with an item in your library; for example, the popularity of Isaac Asimov is the number of books in your library by Isaac Asimov).
+
+.. raw:: html epub
+    
+    <div style="clear:both"></div>
+
+Cover Grid
+-----------
+
+.. image:: images/cover_grid.png
+    :align: center
+
+You can have |app| display a grid of book covers instead of a list of books, if
+you prefer to browse your collection by covers instead. The :guilabel:`Cover
+Grid` is activated by clicking the grid button in the bottom right corner of
+the main |app| window. You can customize the cover sizes and the background of
+the cover grid via :guilabel:`Preferences->Look & Feel->Cover Grid`. You can
+even have |app| display any specified field under the covers, such as title or
+authors or rating or a custom column of your own devising.
+
+Cover Browser
+---------------
+
+.. image:: images/cover_browser.png
+    :align: center
+
+In addition to the cover grid described above, you can also have |app| display
+covers in the single row. This is activated via a button in the lower right
+corner of the main window. In :guilabel:`Preferences->Look & Feel->Cover
+Browser` you can change the number of covers displayed, and even have the cover
+browser display itself in a separate popup window.
 
 Quickview
 ----------
@@ -537,12 +590,22 @@ You can see if a column can be Quickview'ed by hovering your mouse over the colu
 
 Quickview respects the virtual library setting, showing only books in the current virtual library.
 
+.. raw:: html epub
+    
+    <div style="clear:both"></div>
+
+.. _jobs:
+
 Jobs
 -----
 .. image:: images/jobs.png
     :class: float-left-img
 
 The Jobs panel shows the number of currently running jobs. Jobs are tasks that run in a separate process. They include converting ebooks and talking to your reader device. You can click on the jobs panel to access the list of jobs. Once a job has completed you can see a detailed log from that job by double-clicking it in the list. This is useful to debug jobs that may not have completed successfully.
+
+.. raw:: html epub
+    
+    <div style="clear:both"></div>
 
 Keyboard Shortcuts
 ---------------------

@@ -8,9 +8,9 @@ __copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
 
 from functools import partial
 
-from PyQt4.Qt import (
+from PyQt5.Qt import (
     Qt, QMenu, QPoint, QIcon, QDialog, QGridLayout, QLabel, QLineEdit, QComboBox,
-    QDialogButtonBox, QSize, QVBoxLayout, QListWidget, QStringList, QRadioButton, QAction)
+    QDialogButtonBox, QSize, QVBoxLayout, QListWidget, QRadioButton, QAction)
 
 from calibre.gui2 import error_dialog, question_dialog, gprefs
 from calibre.gui2.dialogs.confirm_delete import confirm
@@ -30,7 +30,7 @@ class SelectNames(QDialog):  # {{{
         l.addWidget(la)
 
         self._names = QListWidget(self)
-        self._names.addItems(QStringList(sorted(names, key=sort_key)))
+        self._names.addItems(sorted(names, key=sort_key))
         self._names.setSelectionMode(self._names.ExtendedSelection)
         l.addWidget(self._names)
 
@@ -50,7 +50,7 @@ class SelectNames(QDialog):  # {{{
     @property
     def names(self):
         for item in self._names.selectedItems():
-            yield unicode(item.data(Qt.DisplayRole).toString())
+            yield unicode(item.data(Qt.DisplayRole) or '')
 
     @property
     def match_type(self):
@@ -231,7 +231,7 @@ class CreateVirtualLibrary(QDialog):  # {{{
                 return
         self.new_name = self.editing = self.vl_name.currentText()
         self.original_index = dex
-        self.original_search = unicode(self.vl_name.itemData(dex).toString())
+        self.original_search = unicode(self.vl_name.itemData(dex) or '')
         self.vl_text.setText(self.original_search)
 
     def link_activated(self, url):
@@ -308,7 +308,10 @@ class SearchRestrictionMixin(object):
 
     no_restriction = _('<None>')
 
-    def __init__(self):
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def init_search_restirction_mixin(self):
         self.checked = QIcon(I('ok.png'))
         self.empty = QIcon(I('blank.png'))
         self.current_search_action = QAction(self.empty, _('*current search'), self)
@@ -399,9 +402,8 @@ class SearchRestrictionMixin(object):
 
         if self.search_based_vl_name:
             a = m.addAction(
-                self.checked if db.data.get_base_restriction_name().startswith('*')
-                                            else self.empty,
-                             self.search_based_vl_name)
+                self.checked if db.data.get_base_restriction_name().startswith('*') else self.empty,
+                self.search_based_vl_name)
             a.triggered.connect(partial(self.apply_virtual_library,
                                 library=self.search_based_vl_name))
 
@@ -418,7 +420,7 @@ class SearchRestrictionMixin(object):
     def rebuild_vl_tabs(self):
         self.vl_tabs.rebuild()
 
-    def apply_virtual_library(self, library=None):
+    def apply_virtual_library(self, library=None, update_tabs=True):
         db = self.library_view.model().db
         virt_libs = db.prefs.get('virtual_libraries', {})
         if not library:
@@ -453,7 +455,8 @@ class SearchRestrictionMixin(object):
                                         db.data.get_base_restriction())
         self._apply_search_restriction(db.data.get_search_restriction(),
                                        db.data.get_search_restriction_name())
-        self.vl_tabs.update_current()
+        if update_tabs:
+            self.vl_tabs.update_current()
 
     def build_virtual_library_list(self, menu, handler):
         db = self.library_view.model().db

@@ -5,14 +5,14 @@ __license__   = 'GPL v3'
 __copyright__ = '2010, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
-import textwrap
+import textwrap, re
 from functools import partial
 from collections import OrderedDict
 
-from PyQt4.Qt import (QMainWindow, Qt, QIcon, QStatusBar, QFont, QWidget,
+from PyQt5.Qt import (QMainWindow, Qt, QIcon, QStatusBar, QFont, QWidget,
         QScrollArea, QStackedWidget, QVBoxLayout, QLabel, QFrame, QKeySequence,
         QToolBar, QSize, pyqtSignal, QPixmap, QToolButton, QAction,
-        QDialogButtonBox, QHBoxLayout)
+        QDialogButtonBox, QHBoxLayout, QStatusTipEvent)
 
 from calibre.constants import __appname__, __version__, islinux
 from calibre.gui2 import (gprefs, min_available_height, available_width,
@@ -156,6 +156,7 @@ class Browser(QScrollArea):  # {{{
             self.widgets.append(w)
             self._layout.addWidget(w)
             w.plugin_activated.connect(self.show_plugin.emit)
+        self._layout.addStretch(1)
 
 
 # }}}
@@ -256,6 +257,12 @@ class Preferences(QMainWindow):
             plugin = get_plugin(category, name)
             if plugin is not None:
                 self.show_plugin(plugin)
+
+    def event(self, ev):
+        if ev.type() == ev.StatusTip:
+            msg = re.sub(r'</?[a-z1-6]+>', ' ', ev.tip())
+            ev = QStatusTipEvent(msg)
+        return QMainWindow.event(self, ev)
 
     def run_wizard(self):
         self.close()

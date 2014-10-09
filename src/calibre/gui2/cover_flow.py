@@ -9,7 +9,7 @@ Module to implement the Cover Flow feature
 
 import sys, os, time
 
-from PyQt4.Qt import (QImage, QSizePolicy, QTimer, QDialog, Qt, QSize, QAction,
+from PyQt5.Qt import (QImage, QSizePolicy, QTimer, QDialog, Qt, QSize, QAction,
         QStackedLayout, QLabel, QByteArray, pyqtSignal, QKeySequence, QFont)
 
 from calibre import plugins
@@ -97,14 +97,21 @@ if pictureflow is not None:
             return ans
 
         def subtitle(self, index):
-            try:
-                return u'\u2605'*self.model.rating(index)
-            except:
-                pass
+            if gprefs['show_rating_in_cover_browser']:
+                try:
+                    return u'\u2605'*self.model.rating(index)
+                except:
+                    pass
             return ''
 
         def reset(self):
+            self.beginResetModel(), self.endResetModel()
+
+        def beginResetModel(self):
             self.dataChanged.emit()
+
+        def endResetModel(self):
+            pass
 
         def image(self, index):
             return self.model.cover(index)
@@ -147,11 +154,10 @@ if pictureflow is not None:
             return self.minimumSize()
 
         def wheelEvent(self, ev):
-            ev.accept()
-            if ev.delta() < 0:
-                self.showNext()
-            elif ev.delta() > 0:
-                self.showPrevious()
+            d = ev.angleDelta().y()
+            if abs(d) > 0:
+                ev.accept()
+                (self.showNext if d < 0 else self.showPrevious)()
 
         def dataChanged(self):
             self.dc_signal.emit()
@@ -230,7 +236,10 @@ class CBDialog(QDialog):
 
 class CoverFlowMixin(object):
 
-    def __init__(self):
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def init_cover_flow_mixin(self):
         self.cover_flow = None
         if CoverFlow is not None:
             self.cf_last_updated_at = None
@@ -352,7 +361,7 @@ class CoverFlowMixin(object):
         self.cf_last_updated_at = time.time()
 
 def test():
-    from PyQt4.QtGui import QApplication, QMainWindow
+    from PyQt5.Qt import QApplication, QMainWindow
     app = QApplication([])
     w = QMainWindow()
     cf = CoverFlow()
@@ -371,7 +380,7 @@ def main(args=sys.argv):
     return 0
 
 if __name__ == '__main__':
-    from PyQt4.QtGui import QApplication, QMainWindow
+    from PyQt5.Qt import QApplication, QMainWindow
     app = QApplication([])
     w = QMainWindow()
     cf = CoverFlow()

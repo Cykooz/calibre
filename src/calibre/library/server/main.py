@@ -10,7 +10,7 @@ from threading import Thread
 
 from calibre.library.server import server_config as config
 from calibre.library.server.base import LibraryServer
-from calibre.constants import iswindows
+from calibre.constants import iswindows, plugins
 import cherrypy
 
 def start_threaded_server(db, opts):
@@ -54,7 +54,7 @@ The OPDS interface is advertised via BonJour automatically.
     parser.add_option('--pidfile', default=None,
             help=_('Write process PID to the specified file'))
     parser.add_option('--daemonize', default=False, action='store_true',
-            help='Run process in background as a daemon. No effect on windows.')
+            help=_('Run process in background as a daemon. No effect on windows.'))
     parser.add_option('--restriction', '--virtual-library', default=None,
             help=_('Specifies a virtual library to be used for this invocation. '
                    'This option overrides any per-library settings specified'
@@ -67,7 +67,7 @@ The OPDS interface is advertised via BonJour automatically.
                 ' work in all environments.'))
     return parser
 
-def daemonize(stdin='/dev/null', stdout='/dev/null', stderr='/dev/null'):
+def daemonize():
     try:
         pid = os.fork()
         if pid > 0:
@@ -93,12 +93,15 @@ def daemonize(stdin='/dev/null', stdout='/dev/null', stderr='/dev/null'):
         sys.exit(1)
 
     # Redirect standard file descriptors.
-    si = file(stdin, 'r')
-    so = file(stdout, 'a+')
-    se = file(stderr, 'a+', 0)
-    os.dup2(si.fileno(), sys.stdin.fileno())
-    os.dup2(so.fileno(), sys.stdout.fileno())
-    os.dup2(se.fileno(), sys.stderr.fileno())
+    try:
+        plugins['speedup'][0].detach(os.devnull)
+    except AttributeError:  # people running from source without updated binaries
+        si = os.open(os.devnull, os.O_RDONLY)
+        so = os.open(os.devnull, os.O_WRONLY)
+        se = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(si, sys.stdin.fileno())
+        os.dup2(so, sys.stdout.fileno())
+        os.dup2(se, sys.stderr.fileno())
 
 
 def main(args=sys.argv):

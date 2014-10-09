@@ -466,12 +466,20 @@ class Metadata(object):
             if v not in (None, NULL_VALUES.get(attr, None)):
                 setattr(dest, attr, copy.deepcopy(v))
 
-        if other.title and other.title != _('Unknown'):
+        unknown = _('Unknown')
+        if other.title and other.title != unknown:
             self.title = other.title
             if hasattr(other, 'title_sort'):
                 self.title_sort = other.title_sort
 
-        if other.authors and other.authors[0] != _('Unknown'):
+        if other.authors and (
+                other.authors[0] != unknown or (
+                    not self.authors or (
+                        len(self.authors) == 1 and self.authors[0] == unknown and
+                        getattr(self, 'author_sort', None) == unknown
+                    )
+                )
+        ):
             self.authors = list(other.authors)
             if hasattr(other, 'author_sort_map'):
                 self.author_sort_map = dict(other.author_sort_map)
@@ -677,7 +685,7 @@ class Metadata(object):
             elif datatype == 'text' and fmeta['is_multiple']:
                 if isinstance(res, dict):
                     res = [k + ':' + v for k,v in res.items()]
-                res = fmeta['is_multiple']['list_to_ui'].join(sorted(res, key=sort_key))
+                res = fmeta['is_multiple']['list_to_ui'].join(sorted(filter(None, res), key=sort_key))
             elif datatype == 'series' and series_with_index:
                 res = res + ' [%s]'%self.format_series_index()
             elif datatype == 'datetime':

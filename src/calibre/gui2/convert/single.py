@@ -8,9 +8,9 @@ __docformat__ = 'restructuredtext en'
 
 import cPickle, shutil
 
-from PyQt4.Qt import QString, QAbstractListModel, Qt, QVariant, QFont, QModelIndex
+from PyQt5.Qt import QAbstractListModel, Qt, QFont, QModelIndex
 
-from calibre.gui2 import ResizableDialog, NONE, gprefs
+from calibre.gui2 import ResizableDialog, gprefs
 from calibre.ebooks.conversion.config import (GuiRecommendations, save_specifics,
         load_specifics)
 from calibre.gui2.convert.single_ui import Ui_Dialog
@@ -75,16 +75,16 @@ class GroupModel(QAbstractListModel):
         try:
             widget = self.widgets[index.row()]
         except:
-            return NONE
+            return None
         if role == Qt.DisplayRole:
-            return QVariant(widget.config_title())
+            return (widget.config_title())
         if role == Qt.DecorationRole:
-            return QVariant(widget.config_icon())
+            return (widget.config_icon())
         if role == Qt.FontRole:
             f = QFont()
             f.setBold(True)
-            return QVariant(f)
-        return NONE
+            return (f)
+        return None
 
 def get_preferred_input_format_for_book(db, book_id):
     recs = load_specifics(db, book_id)
@@ -157,7 +157,7 @@ class Config(ResizableDialog, Ui_Dialog):
         self.groups.entered[(QModelIndex)].connect(self.show_group_help)
         rb = self.buttonBox.button(self.buttonBox.RestoreDefaults)
         rb.setText(_('Restore &Defaults'))
-        rb.clicked[()].connect(self.restore_defaults)
+        rb.clicked.connect(self.restore_defaults)
         self.groups.setMouseTracking(True)
         geom = gprefs.get('convert_single_dialog_geom', None)
         if geom:
@@ -254,9 +254,9 @@ class Config(ResizableDialog, Ui_Dialog):
             preferred_output_format in output_formats else \
             sort_formats_by_preference(output_formats,
                     [prefs['output_format']])[0]
-        self.input_formats.addItems(list(map(QString, [x.upper() for x in
+        self.input_formats.addItems(list(map(unicode, [x.upper() for x in
             input_formats])))
-        self.output_formats.addItems(list(map(QString, [x.upper() for x in
+        self.output_formats.addItems(list(map(unicode, [x.upper() for x in
             output_formats])))
         self.input_formats.setCurrentIndex(input_formats.index(input_format))
         self.output_formats.setCurrentIndex(output_formats.index(preferred_output_format))

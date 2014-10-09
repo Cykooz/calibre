@@ -11,10 +11,11 @@ from threading import Thread
 from contextlib import closing
 from collections import defaultdict
 
-from PyQt4.Qt import (
+from PyQt5.Qt import (
     QToolButton, QDialog, QGridLayout, QIcon, QLabel, QDialogButtonBox, QApplication,
     QFormLayout, QCheckBox, QWidget, QScrollArea, QVBoxLayout, Qt, QListWidgetItem, QListWidget)
 
+from calibre.constants import isosx
 from calibre.gui2.actions import InterfaceAction
 from calibre.gui2 import (error_dialog, Dispatcher, warning_dialog, gprefs,
         info_dialog, choose_dir)
@@ -304,7 +305,7 @@ class DuplicatesQuestion(QDialog):  # {{{
 
     @property
     def ids(self):
-        return {i.data(Qt.UserRole).toInt()[0] for i in self.items if i.checkState() == Qt.Checked}
+        return {int(i.data(Qt.UserRole)) for i in self.items if i.checkState() == Qt.Checked}
 
 # }}}
 
@@ -359,6 +360,9 @@ class CopyToLibraryAction(InterfaceAction):
         if len(locations) <= 50:
             self.menu.addAction(_('Choose library by path...'), self.choose_library)
         self.qaction.setVisible(bool(locations))
+        if isosx:
+            # The cloned action has to have its menu updated
+            self.qaction.changed.emit()
 
     def choose_library(self):
         d = ChooseLibrary(self.gui)

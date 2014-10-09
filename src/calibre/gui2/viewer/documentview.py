@@ -8,11 +8,11 @@ import os, math, json
 from base64 import b64encode
 from functools import partial
 
-from PyQt4.Qt import (QSize, QSizePolicy, QUrl, Qt, pyqtProperty,
+from PyQt5.Qt import (QSize, QSizePolicy, QUrl, Qt, pyqtProperty,
         QPainter, QPalette, QBrush, QDialog, QColor, QPoint, QImage, QRegion,
-        QIcon, pyqtSignature, QAction, QMenu, QString, pyqtSignal,
-        QApplication, pyqtSlot)
-from PyQt4.QtWebKit import QWebPage, QWebView, QWebSettings, QWebElement
+        QIcon, QAction, QMenu, pyqtSignal, QApplication, pyqtSlot)
+from PyQt5.QtWebKitWidgets import QWebPage, QWebView
+from PyQt5.QtWebKit import QWebSettings, QWebElement
 
 from calibre.gui2.viewer.flip import SlideFlip
 from calibre.gui2.shortcuts import Shortcuts
@@ -28,7 +28,7 @@ from calibre.gui2.viewer.table_popup import TablePopup
 from calibre.gui2.viewer.inspector import WebInspector
 from calibre.gui2.viewer.gestures import GestureHandler
 from calibre.ebooks.oeb.display.webview import load_html
-from calibre.constants import isxp, iswindows
+from calibre.constants import isxp, iswindows, DEBUG
 # }}}
 
 def apply_settings(settings, opts):
@@ -145,7 +145,7 @@ class Document(QWebPage):  # {{{
             q = unicode(q)
             hyphenated_q = self.javascript(
                 'hyphenate_text(%s, "%s")' % (json.dumps(q, ensure_ascii=False), self.loaded_lang), typ='string')
-            if QWebPage.findText(self, hyphenated_q, flags):
+            if hyphenated_q and QWebPage.findText(self, hyphenated_q, flags):
                 return True
         return QWebPage.findText(self, q, flags)
 
@@ -180,12 +180,10 @@ class Document(QWebPage):  # {{{
     def add_window_objects(self):
         self.mainFrame().addToJavaScriptWindowObject("py_bridge", self)
         self.javascript('''
-                py_bridge.__defineGetter__('value', function() {
-                    return JSON.parse(this._pass_json_value);
-                });
-                py_bridge.__defineSetter__('value', function(val) {
-                    this._pass_json_value = JSON.stringify(val);
-                });
+        Object.defineProperty(py_bridge, 'value', {
+               get : function() { return JSON.parse(this._pass_json_value); },
+               set : function(val) { this._pass_json_value = JSON.stringify(val); }
+        });
         ''')
         self.loaded_javascript = False
 
@@ -205,7 +203,7 @@ class Document(QWebPage):  # {{{
             pl.load_javascript(evaljs)
         evaljs('py_bridge.mark_element.connect(window.calibre_extract.mark)')
 
-    @pyqtSignature("")
+    @pyqtSlot()
     def animated_scroll_done(self):
         self.animated_scroll_done_signal.emit()
 
@@ -214,7 +212,7 @@ class Document(QWebPage):  # {{{
         # Qt fails to render soft hyphens correctly on windows xp
         return not isxp and self.hyphenate and getattr(self, 'loaded_lang', '')
 
-    @pyqtSignature("")
+    @pyqtSlot()
     def init_hyphenate(self):
         if self.hyphenatable:
             self.javascript('do_hyphenation("%s")'%self.loaded_lang)
@@ -225,12 +223,12 @@ class Document(QWebPage):  # {{{
 
     def _pass_json_value_getter(self):
         val = json.dumps(self.bridge_value)
-        return QString(val)
+        return val
 
     def _pass_json_value_setter(self, value):
         self.bridge_value = json.loads(unicode(value))
 
-    _pass_json_value = pyqtProperty(QString, fget=_pass_json_value_getter,
+    _pass_json_value = pyqtProperty(str, fget=_pass_json_value_getter,
             fset=_pass_json_value_setter)
 
     def after_load(self, last_loaded_path=None):
@@ -325,9 +323,9 @@ class Document(QWebPage):  # {{{
         self.javascript('full_screen.off(%s)'%('true' if self.in_paged_mode
             else 'false'))
 
-    @pyqtSignature("QString")
+    @pyqtSlot(str)
     def debug(self, msg):
-        prints(msg)
+        prints(unicode(msg))
 
     def reference_mode(self, enable):
         self.javascript(('enter' if enable else 'leave')+'_reference_mode()')
@@ -351,27 +349,27 @@ class Document(QWebPage):  # {{{
     def javascript(self, string, typ=None):
         ans = self.mainFrame().evaluateJavaScript(string)
         if typ in {'int', int}:
-            ans = ans.toInt()
-            if ans[1]:
-                return ans[0]
-            return 0
+            try:
+                return int(ans)
+            except (TypeError, ValueError):
+                return 0
         if typ in {'float', float}:
-            ans = ans.toReal()
-            return ans[0] if ans[1] else 0.0
+            try:
+                return float(ans)
+            except (TypeError, ValueError):
+                return 0.0
         if typ == 'string':
-            return unicode(ans.toString())
+            return ans or u''
         if typ in {bool, 'bool'}:
-            return ans.toBool()
+            return bool(ans)
         return ans
 
     def javaScriptConsoleMessage(self, msg, lineno, msgid):
-        if self.debug_javascript:
+        if DEBUG:
             prints(msg)
-        else:
-            return QWebPage.javaScriptConsoleMessage(self, msg, lineno, msgid)
 
     def javaScriptAlert(self, frame, msg):
-        if self.debug_javascript:
+        if DEBUG:
             prints(msg)
         else:
             return QWebPage.javaScriptAlert(self, frame, msg)
@@ -388,8 +386,9 @@ class Document(QWebPage):  # {{{
         self.javascript('window.paged_display.jump_to_anchor("%s")'%anchor)
 
     def element_ypos(self, elem):
-        ans, ok = elem.evaluateJavaScript('$(this).offset().top').toInt()
-        if not ok:
+        try:
+            ans = int(elem.evaluateJavaScript('$(this).offset().top'))
+        except (TypeError, ValueError):
             raise ValueError('No ypos found')
         return ans
 
@@ -484,7 +483,7 @@ class Document(QWebPage):  # {{{
 
     def extract_node(self):
         return unicode(self.mainFrame().evaluateJavaScript(
-            'window.calibre_extract.extract()').toString())
+            'window.calibre_extract.extract()'))
 
 # }}}
 
@@ -682,6 +681,12 @@ class DocumentView(QWebView):  # {{{
                 ac = getattr(self, '%s_action' % x)
                 menu.addAction(ac.icon(), '%s [%s]' % (unicode(ac.text()), ','.join(self.shortcuts.get_shortcuts(sc))), ac.trigger)
 
+        if from_touch and self.manager is not None:
+            word = unicode(mf.evaluateJavaScript('window.calibre_utils.word_at_point(%f, %f)' % (ev.pos().x(), ev.pos().y())) or '')
+            if word:
+                menu.addAction(self.dictionary_action.icon(), _('Lookup %s in the dictionary') % word, partial(self.manager.lookup, word))
+                menu.addAction(self.search_online_action.icon(), _('Search for %s online') % word, partial(self.do_search_online, word))
+
         if not text and img.isNull():
             menu.addSeparator()
             if self.manager.action_back.isEnabled():
@@ -710,6 +715,7 @@ class DocumentView(QWebView):  # {{{
             menu.addAction(self.manager.action_full_screen)
 
             menu.addSeparator()
+            menu.addAction(self.manager.action_reload)
             menu.addAction(self.manager.action_quit)
 
         for plugin in self.document.all_viewer_plugins:
@@ -749,8 +755,11 @@ class DocumentView(QWebView):  # {{{
     def search_online(self):
         t = unicode(self.selectedText()).strip()
         if t:
-            url = 'https://www.google.com/search?q=' + QUrl().toPercentEncoding(t)
-            open_url(QUrl.fromEncoded(url))
+            self.do_search_online(t)
+
+    def do_search_online(self, text):
+        url = 'https://www.google.com/search?q=' + QUrl().toPercentEncoding(text)
+        open_url(QUrl.fromEncoded(url))
 
     def set_manager(self, manager):
         self.manager = manager
@@ -1153,18 +1162,21 @@ class DocumentView(QWebView):  # {{{
         painter.end()
 
     def wheelEvent(self, event):
+        if event.phase() != Qt.ScrollUpdate:
+            return
         mods = event.modifiers()
+        num_degrees = event.angleDelta().y() // 8
         if mods & Qt.CTRL:
-            if self.manager is not None and event.delta() != 0:
-                (self.manager.font_size_larger if event.delta() > 0 else
+            if self.manager is not None and num_degrees != 0:
+                (self.manager.font_size_larger if num_degrees > 0 else
                         self.manager.font_size_smaller)()
                 return
 
         if self.document.in_paged_mode:
-            if abs(event.delta()) < 15:
+            if abs(num_degrees) < 15:
                 return
             typ = 'screen' if self.document.wheel_flips_pages else 'col'
-            direction = 'next' if event.delta() < 0 else 'previous'
+            direction = 'next' if num_degrees < 0 else 'previous'
             loc = self.document.javascript('paged_display.%s_%s_location()'%(
                 direction, typ), typ='int')
             if loc > -1:
@@ -1180,7 +1192,7 @@ class DocumentView(QWebView):  # {{{
                 event.accept()
             return
 
-        if event.delta() < -14:
+        if num_degrees < -14:
             if self.document.wheel_flips_pages:
                 self.next_page()
                 event.accept()
@@ -1191,7 +1203,7 @@ class DocumentView(QWebView):  # {{{
                     self.manager.next_document()
                     event.accept()
                     return
-        elif event.delta() > 14:
+        elif num_degrees > 14:
             if self.document.wheel_flips_pages:
                 self.previous_page()
                 event.accept()
@@ -1205,8 +1217,10 @@ class DocumentView(QWebView):  # {{{
 
         ret = QWebView.wheelEvent(self, event)
 
-        scroll_amount = (event.delta() / 120.0) * .2 * -1
-        if event.orientation() == Qt.Vertical:
+        num_degrees_h = event.angleDelta().x() // 8
+        vertical = abs(num_degrees) > abs(num_degrees_h)
+        scroll_amount = ((num_degrees if vertical else num_degrees_h)/ 120.0) * .2 * -1 * 8
+        if vertical:
             self.scroll_by(0, self.document.viewportSize().height() * scroll_amount)
         else:
             self.scroll_by(self.document.viewportSize().width() * scroll_amount, 0)
@@ -1292,10 +1306,12 @@ class DocumentView(QWebView):  # {{{
 
     def mouseReleaseEvent(self, ev):
         opos = self.document.ypos
+        if self.manager is not None:
+            prev_pos = self.manager.update_page_number()
         ret = QWebView.mouseReleaseEvent(self, ev)
         if self.manager is not None and opos != self.document.ypos:
-            self.manager.internal_link_clicked(opos)
             self.manager.scrolled(self.scroll_fraction)
+            self.manager.internal_link_clicked(prev_pos)
         return ret
 
 # }}}

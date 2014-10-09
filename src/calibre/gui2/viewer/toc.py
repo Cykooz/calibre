@@ -8,7 +8,7 @@ __copyright__ = '2012, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
 import re
-from PyQt4.Qt import (QStandardItem, QStandardItemModel, Qt, QFont,
+from PyQt5.Qt import (QStandardItem, QStandardItemModel, Qt, QFont,
         QTreeView)
 
 from calibre.ebooks.metadata.toc import TOC as MTOC
@@ -17,12 +17,16 @@ class TOCView(QTreeView):
 
     def __init__(self, *args):
         QTreeView.__init__(self, *args)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setMinimumWidth(80)
+        self.header().close()
         self.setStyleSheet('''
                 QTreeView {
                     background-color: palette(window);
                     color: palette(window-text);
                     border: none;
                 }
+
                 QTreeView::item {
                     border: 1px solid transparent;
                     padding-top:0.5ex;
@@ -33,17 +37,6 @@ class TOCView(QTreeView):
                     background: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1, stop: 0 #e7effd, stop: 1 #cbdaf1);
                     border: 1px solid #bfcde4;
                     border-radius: 6px;
-                }
-                QHeaderView::section {
-                    background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                                                    stop:0 #616161, stop: 0.5 #505050,
-                                                    stop: 0.6 #434343, stop:1 #656565);
-                    color: white;
-                    padding-left: 4px;
-                    padding-top: 0.5ex;
-                    padding-bottom: 0.5ex;
-                    border: 1px solid #6c6c6c;
-                    font-weight: bold;
                 }
         ''')
 
@@ -59,8 +52,8 @@ class TOCItem(QStandardItem):
         self.abspath = toc.abspath if toc.href else None
         self.fragment = toc.fragment
         all_items.append(self)
-        self.bold_font = QFont(self.font())
-        self.bold_font.setBold(True)
+        self.emphasis_font = QFont(self.font())
+        self.emphasis_font.setBold(True), self.emphasis_font.setItalic(True)
         self.normal_font = self.font()
         for t in toc:
             self.appendRow(TOCItem(spine, t, depth+1, all_items, parent=self))
@@ -154,7 +147,7 @@ class TOCItem(QStandardItem):
         changed = is_being_viewed != self.is_being_viewed
         self.is_being_viewed = is_being_viewed
         if changed:
-            self.setFont(self.bold_font if is_being_viewed else self.normal_font)
+            self.setFont(self.emphasis_font if is_being_viewed else self.normal_font)
 
     def update_indexing_state_paged(self, spine_index, viewport_rect,
             anchor_map):
@@ -199,7 +192,7 @@ class TOCItem(QStandardItem):
         changed = is_being_viewed != self.is_being_viewed
         self.is_being_viewed = is_being_viewed
         if changed:
-            self.setFont(self.bold_font if is_being_viewed else self.normal_font)
+            self.setFont(self.emphasis_font if is_being_viewed else self.normal_font)
 
     def __repr__(self):
         return 'TOC Item: %s %s#%s'%(self.title, self.abspath, self.fragment)
@@ -216,7 +209,6 @@ class TOC(QStandardItemModel):
         self.all_items = depth_first = []
         for t in toc:
             self.appendRow(TOCItem(spine, t, 0, depth_first))
-        self.setHorizontalHeaderItem(0, QStandardItem(_('Table of Contents')))
 
         for x in depth_first:
             possible_enders = [t for t in depth_first if t.depth <= x.depth

@@ -5,12 +5,13 @@ __license__   = 'GPL v3'
 
 import json, os, traceback
 
-from PyQt4.Qt import (Qt, QDialog, QDialogButtonBox, QSyntaxHighlighter, QFont,
+from PyQt5.Qt import (Qt, QDialog, QDialogButtonBox, QSyntaxHighlighter, QFont,
                       QRegExp, QApplication, QTextCharFormat, QColor, QCursor,
-                      QIcon, QSize, QVariant)
+                      QIcon, QSize)
 
 from calibre import sanitize_file_name_unicode
 from calibre.constants import config_dir
+from calibre.gui2 import gprefs
 from calibre.gui2.dialogs.template_dialog_ui import Ui_TemplateDialog
 from calibre.utils.formatter_functions import formatter_functions
 from calibre.utils.icu import sort_key
@@ -75,7 +76,6 @@ class TemplateHighlighter(QSyntaxHighlighter):
     def initializeFormats(self):
         Config = self.Config
         Config["fontfamily"] = "monospace"
-        #Config["fontsize"] = 10
         for name, color, bold, italic in (
                 ("normal", "#000000", False, False),
                 ("keyword", "#000080", True, False),
@@ -88,10 +88,10 @@ class TemplateHighlighter(QSyntaxHighlighter):
             Config["%sfontcolor" % name] = color
             Config["%sfontbold" % name] = bold
             Config["%sfontitalic" % name] = italic
-
         baseFormat = QTextCharFormat()
         baseFormat.setFontFamily(Config["fontfamily"])
-        #baseFormat.setFontPointSize(Config["fontsize"])
+        Config["fontsize"] = gprefs['gpm_template_editor_font_size']
+        baseFormat.setFontPointSize(Config["fontsize"])
 
         for name in ("normal", "keyword", "builtin", "comment",
                      "string", "number", "lparen", "rparen"):
@@ -108,14 +108,14 @@ class TemplateHighlighter(QSyntaxHighlighter):
 
     def highlightBlock(self, text):
         bn = self.currentBlock().blockNumber()
-        textLength = text.length()
+        textLength = len(text)
 
         self.setFormat(0, textLength, self.Formats["normal"])
 
-        if text.isEmpty():
+        if not text:
             pass
-        elif text[0] == "#":
-            self.setFormat(0, text.length(), self.Formats["comment"])
+        elif text[0] == u"#":
+            self.setFormat(0, textLength, self.Formats["comment"])
             return
 
         for regex, format in TemplateHighlighter.Rules:
@@ -202,13 +202,15 @@ class TemplateHighlighter(QSyntaxHighlighter):
 class TemplateDialog(QDialog, Ui_TemplateDialog):
 
     def __init__(self, parent, text, mi=None, fm=None, color_field=None,
-                 icon_field_key=None, icon_rule_kind=None):
+                 icon_field_key=None, icon_rule_kind=None, doing_emblem=False,
+                 text_is_placeholder=False):
         QDialog.__init__(self, parent)
         Ui_TemplateDialog.__init__(self)
         self.setupUi(self)
 
         self.coloring = color_field is not None
         self.iconing = icon_field_key is not None
+        self.embleming = doing_emblem
 
         cols = []
         if fm is not None:
@@ -229,8 +231,14 @@ class TemplateDialog(QDialog, Ui_TemplateDialog):
             for n1, k1 in cols:
                 self.colored_field.addItem(n1, k1)
             self.colored_field.setCurrentIndex(self.colored_field.findData(color_field))
-        elif self.iconing:
+        elif self.iconing or self.embleming:
             self.icon_layout.setVisible(True)
+            if self.embleming:
+                self.icon_kind_label.setVisible(False)
+                self.icon_kind.setVisible(False)
+                self.icon_chooser_label.setVisible(False)
+                self.icon_field.setVisible(False)
+
             for n1, k1 in cols:
                 self.icon_field.addItem(n1, k1)
             self.icon_file_names = []
@@ -244,28 +252,37 @@ class TemplateDialog(QDialog, Ui_TemplateDialog):
             self.icon_file_names.sort(key=sort_key)
             self.update_filename_box()
 
-            dex = 0
-            from calibre.gui2.preferences.coloring import icon_rule_kinds
-            for i,tup in enumerate(icon_rule_kinds):
-                txt,val = tup
-                self.icon_kind.addItem(txt, userData=QVariant(val))
-                if val == icon_rule_kind:
-                    dex = i
-            self.icon_kind.setCurrentIndex(dex)
-            self.icon_field.setCurrentIndex(self.icon_field.findData(icon_field_key))
+            if self.iconing:
+                dex = 0
+                from calibre.gui2.preferences.coloring import icon_rule_kinds
+                for i,tup in enumerate(icon_rule_kinds):
+                    txt,val = tup
+                    self.icon_kind.addItem(txt, userData=(val))
+                    if val == icon_rule_kind:
+                        dex = i
+                self.icon_kind.setCurrentIndex(dex)
+                self.icon_field.setCurrentIndex(self.icon_field.findData(icon_field_key))
 
         if mi:
             self.mi = mi
         else:
             self.mi = Metadata(_('Title'), [_('Author')])
             self.mi.author_sort = _('Author Sort')
-            self.mi.series = _('Series')
+            self.mi.series = ngettext('Series', 'Series', 1)
             self.mi.series_index = 3
             self.mi.rating = 4.0
             self.mi.tags = [_('Tag 1'), _('Tag 2')]
             self.mi.languages = ['eng']
             if fm is not None:
                 self.mi.set_all_user_metadata(fm.custom_field_metadata())
+            else:
+                # No field metadata. Grab a copy from the current library so
+                # that we can validate any custom column names. The values for
+                # the columns will all be empty, which in some very unusual
+                # cases might cause formatter errors. We can live with that.
+                from calibre.gui2.ui import get_gui
+                self.mi.set_all_user_metadata(
+                      get_gui().current_db.new_api.field_metadata.custom_field_metadata())
 
         # Remove help icon on title bar
         icon = self.windowIcon()
@@ -283,7 +300,10 @@ class TemplateDialog(QDialog, Ui_TemplateDialog):
         self.source_code.setReadOnly(True)
 
         if text is not None:
-            self.textbox.setPlainText(text)
+            if text_is_placeholder:
+                self.textbox.setPlaceholderText(text)
+            else:
+                self.textbox.setPlainText(text)
         self.buttonBox.button(QDialogButtonBox.Ok).setText(_('&OK'))
         self.buttonBox.button(QDialogButtonBox.Cancel).setText(_('&Cancel'))
         self.color_copy_button.clicked.connect(self.color_to_clipboard)
@@ -316,6 +336,14 @@ class TemplateDialog(QDialog, Ui_TemplateDialog):
         self.template_func_reference.setText(
                 '<a href="http://manual.calibre-ebook.com/template_ref.html">'
                 '%s</a>'%tt)
+
+        self.font_size_box.setValue(gprefs['gpm_template_editor_font_size'])
+        self.font_size_box.valueChanged.connect(self.font_size_changed)
+
+    def font_size_changed(self, toWhat):
+        gprefs['gpm_template_editor_font_size'] = toWhat
+        self.highlighter.initializeFormats()
+        self.highlighter.rehighlight()
 
     def filename_button_clicked(self):
         try:
@@ -410,13 +438,22 @@ class TemplateDialog(QDialog, Ui_TemplateDialog):
                 return
 
             self.rule = (unicode(self.colored_field.itemData(
-                                self.colored_field.currentIndex()).toString()), txt)
+                                self.colored_field.currentIndex()) or ''), txt)
         elif self.iconing:
-            rt = unicode(self.icon_kind.itemData(self.icon_kind.currentIndex()).toString())
+            rt = unicode(self.icon_kind.itemData(self.icon_kind.currentIndex()) or '')
             self.rule = (rt,
                          unicode(self.icon_field.itemData(
-                                self.icon_field.currentIndex()).toString()),
+                                self.icon_field.currentIndex()) or ''),
                          txt)
+        elif self.embleming:
+            self.rule = ('icon', 'title', txt)
         else:
             self.rule = ('', txt)
         QDialog.accept(self)
+
+if __name__ == '__main__':
+    app = QApplication([])
+    from calibre.ebooks.metadata.book.base import field_metadata
+    d = TemplateDialog(None, '{title}', fm=field_metadata)
+    d.exec_()
+    del app

@@ -117,10 +117,10 @@ def _get_metadata(stream, stream_type, use_libprs_metadata,
 
     return base
 
-def set_metadata(stream, mi, stream_type='lrf'):
+def set_metadata(stream, mi, stream_type='lrf', report_error=None):
     if stream_type:
         stream_type = stream_type.lower()
-    set_file_type_metadata(stream, mi, stream_type)
+    set_file_type_metadata(stream, mi, stream_type, report_error=report_error)
 
 
 def metadata_from_filename(name, pat=None, fallback_pat=None):
@@ -183,6 +183,11 @@ def metadata_from_filename(name, pat=None, fallback_pat=None):
                 from calibre.utils.date import parse_only_date
                 mi.pubdate = parse_only_date(pubdate)
         except:
+            pass
+        try:
+            comments = match.group('comments')
+            mi.comments = comments
+        except (IndexError, ValueError):
             pass
 
     if mi.is_null('title'):

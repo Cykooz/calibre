@@ -87,6 +87,7 @@ class CriticalError(Exception):
 _name_counter = 0
 
 if islinux:
+    import fcntl
     class LinuxListener(Listener):
 
         def __init__(self, *args, **kwargs):
@@ -94,6 +95,14 @@ if islinux:
             # multiprocessing tries to call unlink even on abstract
             # named sockets, prevent it from doing so.
             self._listener._unlink.cancel()
+            # Prevent child processes from inheriting this socket
+            # If we dont do this child processes not created by calibre, will
+            # inherit this socket, preventing the calibre GUI from being restarted.
+            # Examples of such processes are external viewers launched by Qt
+            # using openUrl().
+            fd = self._listener._socket.fileno()
+            old_flags = fcntl.fcntl(fd, fcntl.F_GETFD)
+            fcntl.fcntl(fd, fcntl.F_SETFD, old_flags | fcntl.FD_CLOEXEC)
 
         def close(self):
             # To ensure that the socket is released, we have to call
@@ -150,7 +159,7 @@ class Server(Thread):
 
         self.start()
 
-    def launch_worker(self, gui=False, redirect_output=None):
+    def launch_worker(self, gui=False, redirect_output=None, job_name=None):
         start = time.time()
         with self._worker_launch_lock:
             self.launched_worker_count += 1
@@ -162,20 +171,19 @@ class Server(Thread):
             redirect_output = not gui
 
         env = {
-                'CALIBRE_WORKER_ADDRESS' :
-                    hexlify(cPickle.dumps(self.listener.address, -1)),
+                'CALIBRE_WORKER_ADDRESS' : hexlify(cPickle.dumps(self.listener.address, -1)),
                 'CALIBRE_WORKER_KEY' : hexlify(self.auth_key),
                 'CALIBRE_WORKER_RESULT' : hexlify(rfile.encode('utf-8')),
               }
-        cw = self.do_launch(env, gui, redirect_output, rfile)
+        cw = self.do_launch(env, gui, redirect_output, rfile, job_name=job_name)
         if isinstance(cw, basestring):
             raise CriticalError('Failed to launch worker process:\n'+cw)
         if DEBUG:
             print 'Worker Launch took:', time.time() - start
         return cw
 
-    def do_launch(self, env, gui, redirect_output, rfile):
-        w = Worker(env, gui=gui)
+    def do_launch(self, env, gui, redirect_output, rfile, job_name=None):
+        w = Worker(env, gui=gui, job_name=job_name)
 
         try:
             w(redirect_output=redirect_output)
@@ -196,7 +204,7 @@ class Server(Thread):
         self.add_jobs_queue.put(job)
 
     def run_job(self, job, gui=True, redirect_output=False):
-        w = self.launch_worker(gui=gui, redirect_output=redirect_output)
+        w = self.launch_worker(gui=gui, redirect_output=redirect_output, job_name=getattr(job, 'name', None))
         w.start_job(job)
 
     def run(self):

@@ -6,21 +6,23 @@ from __future__ import (unicode_literals, division, absolute_import,
 __license__ = 'GPL v3'
 __copyright__ = '2014, Kovid Goyal <kovid at kovidgoyal.net>'
 
-import os
+import os, textwrap
 from itertools import izip
 from collections import OrderedDict
 
-from PyQt4.Qt import (
+from PyQt5.Qt import (
     QDialog, QDialogButtonBox, QGridLayout, QLabel, QLineEdit, QVBoxLayout,
     QFormLayout, QHBoxLayout, QToolButton, QIcon, QApplication, Qt, QWidget,
     QPoint, QSizePolicy, QPainter, QStaticText, pyqtSignal, QTextOption,
-    QAbstractListModel, QModelIndex, QVariant, QStyledItemDelegate, QStyle,
-    QListView, QTextDocument, QSize, QComboBox, QFrame, QCursor)
+    QAbstractListModel, QModelIndex, QStyledItemDelegate, QStyle, QCheckBox,
+    QListView, QTextDocument, QSize, QComboBox, QFrame, QCursor, QGroupBox,
+    QSplitter, QPixmap, QRect)
 
-from calibre import prepare_string_for_xml
-from calibre.gui2 import error_dialog, choose_files, choose_save_file, NONE, info_dialog
-from calibre.gui2.tweak_book import tprefs
-from calibre.utils.icu import primary_sort_key, sort_key
+from calibre import prepare_string_for_xml, human_readable
+from calibre.ebooks.oeb.polish.utils import lead_text, guess_type
+from calibre.gui2 import error_dialog, choose_files, choose_save_file, info_dialog, choose_images
+from calibre.gui2.tweak_book import tprefs, current_container
+from calibre.utils.icu import primary_sort_key, sort_key, primary_contains
 from calibre.utils.matcher import get_char, Matcher
 from calibre.gui2.complete2 import EditWithComplete
 
@@ -450,7 +452,7 @@ class QuickOpen(Dialog):
         Simply type in the characters:
         {chars}
         and press Enter.''').format(example=example, chars=chars))
-        hl.setMargin(50), hl.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
+        hl.setContentsMargins(50, 50, 50, 50), hl.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
         l.addWidget(hl)
         self.results = Results(self)
         self.results.setVisible(False)
@@ -500,7 +502,7 @@ class NamesDelegate(QStyledItemDelegate):
 
     def paint(self, painter, option, index):
         QStyledItemDelegate.paint(self, painter, option, index)
-        text, positions = index.data(Qt.UserRole).toPyObject()
+        text, positions = index.data(Qt.UserRole)
         self.initStyleOption(option, index)
         painter.save()
         painter.setFont(option.font)
@@ -549,18 +551,18 @@ class NamesModel(QAbstractListModel):
 
     def data(self, index, role):
         if role == Qt.UserRole:
-            return QVariant(self.items[index.row()])
+            return self.items[index.row()]
         if role == Qt.DisplayRole:
-            return QVariant('\xa0' * 20)
-        return NONE
+            return '\xa0' * 20
 
     def filter(self, query):
         query = unicode(query or '')
+        self.beginResetModel()
         if not query:
             self.items = tuple((text, None) for text in self.names)
         else:
             self.items = tuple(self.matcher(query).iteritems())
-        self.reset()
+        self.endResetModel()
         self.filtered.emit(not bool(query))
 
     def find_name(self, name):
@@ -568,13 +570,20 @@ class NamesModel(QAbstractListModel):
             if text == name:
                 return i
 
-def create_filterable_names_list(names, filter_text=None, parent=None):
+    def name_for_index(self, index):
+        try:
+            return self.items[index.row()][0]
+        except IndexError:
+            pass
+
+def create_filterable_names_list(names, filter_text=None, parent=None, model=NamesModel):
     nl = QListView(parent)
-    nl.m = m = NamesModel(names, parent=nl)
+    nl.m = m = model(names, parent=nl)
     m.filtered.connect(lambda all_items: nl.scrollTo(m.index(0)))
     nl.setModel(m)
-    nl.d = NamesDelegate(nl)
-    nl.setItemDelegate(nl.d)
+    if model is NamesModel:
+        nl.d = NamesDelegate(nl)
+        nl.setItemDelegate(nl.d)
     f = QLineEdit(parent)
     f.setPlaceholderText(filter_text or '')
     f.textEdited.connect(m.filter)
@@ -583,6 +592,39 @@ def create_filterable_names_list(names, filter_text=None, parent=None):
 # }}}
 
 # Insert Link {{{
+
+class AnchorsModel(QAbstractListModel):
+
+    filtered = pyqtSignal(object)
+
+    def __init__(self, names, parent=None):
+        self.items = []
+        self.names = []
+        QAbstractListModel.__init__(self, parent=parent)
+
+    def rowCount(self, parent=ROOT):
+        return len(self.items)
+
+    def data(self, index, role):
+        if role == Qt.UserRole:
+            return self.items[index.row()]
+        if role == Qt.DisplayRole:
+            return '\n'.join(self.items[index.row()])
+        if role == Qt.ToolTipRole:
+            text, frag = self.items[index.row()]
+            return _('Anchor: {0}\nLeading text: {1}').format(frag, text)
+
+    def set_names(self, names):
+        self.names = names
+        self.filter('')
+
+    def filter(self, query):
+        query = unicode(query or '')
+        self.beginResetModel()
+        self.items = [x for x in self.names if primary_contains(query, x[0]) or primary_contains(query, x[1])]
+        self.endResetModel()
+        self.filtered.emit(not bool(query))
+
 class InsertLink(Dialog):
 
     def __init__(self, container, source_name, initial_text=None, parent=None):
@@ -612,7 +654,8 @@ class InsertLink(Dialog):
         fnl.addWidget(la), fnl.addWidget(f), fnl.addWidget(fn)
         h.addLayout(fnl), h.setStretch(0, 2)
 
-        fn, f = create_filterable_names_list([], filter_text=_('Filter locations'), parent=self)
+        fn, f = create_filterable_names_list([], filter_text=_('Filter locations'), parent=self, model=AnchorsModel)
+        fn.setSpacing(5)
         self.anchor_names, self.anchor_names_filter = fn, f
         fn.selectionModel().selectionChanged.connect(self.update_target)
         fn.doubleClicked.connect(self.accept, type=Qt.QueuedConnection)
@@ -641,15 +684,19 @@ class InsertLink(Dialog):
         if not rows:
             self.anchor_names.model().set_names([])
         else:
-            name, positions = self.file_names.model().data(rows[0], Qt.UserRole).toPyObject()
+            name, positions = self.file_names.model().data(rows[0], Qt.UserRole)
             self.populate_anchors(name)
 
     def populate_anchors(self, name):
         if name not in self.anchor_cache:
             from calibre.ebooks.oeb.base import XHTML_NS
             root = self.container.parsed(name)
-            self.anchor_cache[name] = sorted(
-                (set(root.xpath('//*/@id')) | set(root.xpath('//h:a/@name', namespaces={'h':XHTML_NS}))) - {''}, key=primary_sort_key)
+            ac = self.anchor_cache[name] = []
+            for item in set(root.xpath('//*[@id]')) | set(root.xpath('//h:a[@name]', namespaces={'h':XHTML_NS})):
+                frag = item.get('id', None) or item.get('name')
+                text = lead_text(item, num_words=4)
+                ac.append((text, frag))
+            ac.sort(key=lambda text_frag: primary_sort_key(text_frag[0]))
         self.anchor_names.model().set_names(self.anchor_cache[name])
         self.update_target()
 
@@ -657,7 +704,7 @@ class InsertLink(Dialog):
         rows = list(self.file_names.selectionModel().selectedRows())
         if not rows:
             return
-        name = self.file_names.model().data(rows[0], Qt.UserRole).toPyObject()[0]
+        name = self.file_names.model().data(rows[0], Qt.UserRole)[0]
         if name == self.source_name:
             href = ''
         else:
@@ -665,7 +712,7 @@ class InsertLink(Dialog):
         frag = ''
         rows = list(self.anchor_names.selectionModel().selectedRows())
         if rows:
-            anchor = self.anchor_names.model().data(rows[0], Qt.UserRole).toPyObject()[0]
+            anchor = self.anchor_names.model().data(rows[0], Qt.UserRole)[1]
             if anchor:
                 frag = '#' + anchor
         href += frag
@@ -796,7 +843,7 @@ class InsertSemantics(Dialog):
         d.exec_()
 
     def semantic_type_changed(self):
-        item_type = unicode(self.semantic_type.itemData(self.semantic_type.currentIndex()).toString())
+        item_type = unicode(self.semantic_type.itemData(self.semantic_type.currentIndex()) or '')
         name, frag = self.final_type_map.get(item_type, (None, None))
         self.show_type(name, frag)
 
@@ -822,7 +869,7 @@ class InsertSemantics(Dialog):
 
     def target_text_changed(self):
         name, frag = unicode(self.target.text()).partition('#')[::2]
-        item_type = unicode(self.semantic_type.itemData(self.semantic_type.currentIndex()).toString())
+        item_type = unicode(self.semantic_type.itemData(self.semantic_type.currentIndex()) or '')
         self.final_type_map[item_type] = (name, frag or None)
 
     def selected_file_changed(self, *args):
@@ -830,7 +877,7 @@ class InsertSemantics(Dialog):
         if not rows:
             self.anchor_names.model().set_names([])
         else:
-            name, positions = self.file_names.model().data(rows[0], Qt.UserRole).toPyObject()
+            name, positions = self.file_names.model().data(rows[0], Qt.UserRole)
             self.populate_anchors(name)
 
     def populate_anchors(self, name):
@@ -846,12 +893,12 @@ class InsertSemantics(Dialog):
         rows = list(self.file_names.selectionModel().selectedRows())
         if not rows:
             return
-        name = self.file_names.model().data(rows[0], Qt.UserRole).toPyObject()[0]
+        name = self.file_names.model().data(rows[0], Qt.UserRole)[0]
         href = name
         frag = ''
         rows = list(self.anchor_names.selectionModel().selectedRows())
         if rows:
-            anchor = self.anchor_names.model().data(rows[0], Qt.UserRole).toPyObject()[0]
+            anchor = self.anchor_names.model().data(rows[0], Qt.UserRole)[0]
             if anchor:
                 frag = '#' + anchor
         href += frag
@@ -884,6 +931,211 @@ class InsertSemantics(Dialog):
 
 # }}}
 
+class FilterCSS(Dialog):  # {{{
+
+    def __init__(self, current_name=None, parent=None):
+        self.current_name = current_name
+        Dialog.__init__(self, _('Filter Style Information'), 'filter-css', parent=parent)
+
+    def setup_ui(self):
+        from calibre.gui2.convert.look_and_feel_ui import Ui_Form
+        f, w = Ui_Form(), QWidget()
+        f.setupUi(w)
+        self.l = l = QFormLayout(self)
+        self.setLayout(l)
+
+        l.addRow(QLabel(_('Select what style information you want completely removed:')))
+        self.h = h = QHBoxLayout()
+
+        for name, text in {
+                'fonts':_('&Fonts'), 'margins':_('&Margins'), 'padding':_('&Padding'), 'floats':_('Flo&ats'), 'colors':_('&Colors')}.iteritems():
+            c = QCheckBox(text)
+            setattr(self, 'opt_' + name, c)
+            h.addWidget(c)
+            c.setToolTip(getattr(f, 'filter_css_' + name).toolTip())
+        l.addRow(h)
+
+        self.others = o = QLineEdit(self)
+        l.addRow(_('&Other CSS properties:'), o)
+        o.setToolTip(f.filter_css_others.toolTip())
+
+        if self.current_name is not None:
+            self.filter_current = c = QCheckBox(_('Only filter CSS in the current file (%s)') % self.current_name)
+            l.addRow(c)
+
+        l.addRow(self.bb)
+
+    @property
+    def filter_names(self):
+        if self.current_name is not None and self.filter_current.isChecked():
+            return (self.current_name,)
+        return ()
+
+    @property
+    def filtered_properties(self):
+        ans = set()
+        a = ans.add
+        if self.opt_fonts.isChecked():
+            a('font-family')
+        if self.opt_margins.isChecked():
+            a('margin')
+        if self.opt_padding.isChecked():
+            a('padding')
+        if self.opt_floats.isChecked():
+            a('float'), a('clear')
+        if self.opt_colors.isChecked():
+            a('color'), a('background-color')
+        for x in unicode(self.others.text()).split(','):
+            x = x.strip()
+            if x:
+                a(x)
+        return ans
+
+    @classmethod
+    def test(cls):
+        d = cls()
+        if d.exec_() == d.Accepted:
+            print (d.filtered_properties)
+
+# }}}
+
+# Add Cover {{{
+
+class CoverView(QWidget):
+
+    def __init__(self, parent=None):
+        QWidget.__init__(self, parent)
+        self.current_pixmap_size = QSize(0, 0)
+        self.pixmap = QPixmap()
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+    def set_pixmap(self, data):
+        self.pixmap.loadFromData(data)
+        self.current_pixmap_size = self.pixmap.size()
+        self.update()
+
+    def paintEvent(self, event):
+        if self.pixmap.isNull():
+            return
+        canvas_size = self.rect()
+        width = self.current_pixmap_size.width()
+        extrax = canvas_size.width() - width
+        if extrax < 0:
+            extrax = 0
+        x = int(extrax/2.)
+        height = self.current_pixmap_size.height()
+        extray = canvas_size.height() - height
+        if extray < 0:
+            extray = 0
+        y = int(extray/2.)
+        target = QRect(x, y, min(canvas_size.width(), width), min(canvas_size.height(), height))
+        p = QPainter(self)
+        p.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
+        p.drawPixmap(target, self.pixmap.scaled(target.size(),
+            Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        p.end()
+
+    def sizeHint(self):
+        return QSize(300, 400)
+
+class AddCover(Dialog):
+
+    import_requested = pyqtSignal(object, object)
+
+    def __init__(self, container, parent=None):
+        self.container = container
+        Dialog.__init__(self, _('Add a cover'), 'add-cover-wizard', parent)
+
+    @property
+    def image_names(self):
+        img_types = {guess_type('a.'+x) for x in ('png', 'jpeg', 'gif')}
+        for name, mt in self.container.mime_map.iteritems():
+            if mt.lower() in img_types:
+                yield name
+
+    def setup_ui(self):
+        self.l = l = QVBoxLayout(self)
+        self.setLayout(l)
+        self.gb  = gb = QGroupBox(_('&Images in book'), self)
+        self.v = v = QVBoxLayout(gb)
+        gb.setLayout(v), gb.setFlat(True)
+        self.names, self.names_filter = create_filterable_names_list(
+            sorted(self.image_names, key=sort_key), filter_text=_('Filter the list of images'), parent=self)
+        self.names.doubleClicked.connect(self.double_clicked, type=Qt.QueuedConnection)
+        self.cover_view = CoverView(self)
+        l.addWidget(self.names_filter)
+        v.addWidget(self.names)
+
+        self.splitter = s = QSplitter(self)
+        l.addWidget(s)
+        s.addWidget(gb)
+        s.addWidget(self.cover_view)
+
+        self.h = h = QHBoxLayout()
+        self.preserve = p = QCheckBox(_('Preserve aspect ratio'))
+        p.setToolTip(textwrap.fill(_('If enabled the cover image you select will be embedded'
+                       ' into the book in such a way that when viewed, its aspect'
+                       ' ratio (ratio of width to height) will be preserved.'
+                       ' This will mean blank spaces around the image if the screen'
+                       ' the book is being viewed on has an aspect ratio different'
+                       ' to the image.')))
+        p.setChecked(tprefs['add_cover_preserve_aspect_ratio'])
+        p.setVisible(self.container.book_type != 'azw3')
+        p.stateChanged.connect(lambda s:tprefs.set('add_cover_preserve_aspect_ratio', s == Qt.Checked))
+        self.info_label = il = QLabel('\xa0')
+        h.addWidget(p), h.addStretch(1), h.addWidget(il)
+        l.addLayout(h)
+
+        l.addWidget(self.bb)
+        b = self.bb.addButton(_('Import &image'), self.bb.ActionRole)
+        b.clicked.connect(self.import_image)
+        b.setIcon(QIcon(I('document_open.png')))
+        self.names.setFocus(Qt.OtherFocusReason)
+        self.names.selectionModel().currentChanged.connect(self.current_image_changed)
+
+    def double_clicked(self):
+        self.accept()
+
+    @property
+    def file_name(self):
+        return self.names.model().name_for_index(self.names.currentIndex())
+
+    def current_image_changed(self):
+        self.info_label.setText('')
+        name = self.file_name
+        if name is not None:
+            data = self.container.raw_data(name, decode=False)
+            self.cover_view.set_pixmap(data)
+            self.info_label.setText('{0}x{1}px | {2}'.format(
+                self.cover_view.pixmap.width(), self.cover_view.pixmap.height(), human_readable(len(data))))
+
+    def import_image(self):
+        ans = choose_images(self, 'add-cover-choose-image', _('Choose a cover image'), formats=(
+            'jpg', 'jpeg', 'png', 'gif'))
+        if ans:
+            from calibre.gui2.tweak_book.file_list import NewFileDialog
+            d = NewFileDialog(self)
+            d.do_import_file(ans[0], hide_button=True)
+            if d.exec_() == d.Accepted:
+                self.import_requested.emit(d.file_name, d.file_data)
+                self.container = current_container()
+                self.names_filter.clear()
+                self.names.model().set_names(sorted(self.image_names, key=sort_key))
+                i = self.names.model().find_name(d.file_name)
+                self.names.setCurrentIndex(self.names.model().index(i))
+                self.current_image_changed()
+
+    @classmethod
+    def test(cls):
+        import sys
+        from calibre.ebooks.oeb.polish.container import get_container
+        c = get_container(sys.argv[-1], tweak_mode=True)
+        d = cls(c)
+        if d.exec_() == d.Accepted:
+            pass
+
+# }}}
+
 if __name__ == '__main__':
     app = QApplication([])
-    InsertTag.test()
+    AddCover.test()

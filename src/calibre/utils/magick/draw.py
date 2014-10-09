@@ -74,8 +74,8 @@ def save_cover_data_to(data, path, bgcolor='#ffffff', resize_to=None,
     fmt = normalize_format_name(fmt[1:])
 
     if grayscale:
-       img.type = "GrayscaleType"
-       changed = True
+        img.type = "GrayscaleType"
+        changed = True
 
     if resize_to is not None:
         img.size = (resize_to[0], resize_to[1])
@@ -192,7 +192,7 @@ def _get_line(img, dw, tokens, line_width):
     line, rest = tokens, []
     while True:
         m = img.font_metrics(dw, ' '.join(line))
-        width, height = m.text_width, m.text_height
+        width = m.text_width
         if width < line_width:
             return line, rest
         rest = line[-1:] + rest
@@ -273,9 +273,7 @@ def create_cover_page(top_lines, logo_path, width=590, height=750,
         bottom += line.bottom_margin
     bottom -= top_lines[-1].bottom_margin
 
-    foot_font = tweaks['generate_cover_foot_font']
-    if not foot_font:
-        foot_font = P('fonts/liberation/LiberationMono-Regular.ttf')
+    foot_font = P('fonts/liberation/LiberationMono-Regular.ttf')
     vanity = create_text_arc(__appname__ + ' ' + __version__, 24,
             font=foot_font, bgcolor='#00000000')
     lwidth, lheight = vanity.size

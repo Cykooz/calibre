@@ -7,7 +7,7 @@ __docformat__ = 'restructuredtext en'
 
 import os, subprocess, hashlib, shutil, glob, stat, sys, time
 from subprocess import check_call
-from tempfile import NamedTemporaryFile, mkdtemp
+from tempfile import NamedTemporaryFile, mkdtemp, gettempdir
 from zipfile import ZipFile
 
 if __name__ == '__main__':
@@ -26,8 +26,8 @@ STAGING_USER = 'root'
 STAGING_DIR = '/root/staging'
 
 def installers():
-    installers = list(map(installer_name, ('dmg', 'msi', 'tar.bz2')))
-    installers.append(installer_name('tar.bz2', is64bit=True))
+    installers = list(map(installer_name, ('dmg', 'msi', 'txz')))
+    installers.append(installer_name('txz', is64bit=True))
     installers.append(installer_name('msi', is64bit=True))
     installers.insert(0, 'dist/%s-%s.tar.xz'%(__appname__, __version__))
     installers.append('dist/%s-portable-installer-%s.exe'%(__appname__, __version__))
@@ -36,7 +36,7 @@ def installers():
 def installer_description(fname):
     if fname.endswith('.tar.xz'):
         return 'Source code'
-    if fname.endswith('.tar.bz2'):
+    if fname.endswith('.txz'):
         bits = '32' if 'i686' in fname else '64'
         return bits + 'bit Linux binary'
     if fname.endswith('.msi'):
@@ -95,6 +95,13 @@ def get_google_data():
         'project':'calibre-ebook'
     }
 
+def get_github_data():
+    with open(os.path.expanduser('~/work/env/private/github'), 'rb') as f:
+        un, pw = f.read().strip().split(':')
+    return {
+        'username':un, 'password':pw
+    }
+
 def get_sourceforge_data():
     return {'username':'kovidgoyal', 'project':'calibre'}
 
@@ -108,6 +115,9 @@ def gc_cmdline(ver, gdata):
                 gdata['gc_password'], '--path-map-server',
                 gdata['path_map_server'], '--path-map-location',
                 gdata['path_map_location']]
+
+def gh_cmdline(ver, data):
+    return [__appname__, ver, 'fmap', 'github', __appname__, data['username'], data['password']]
 
 def sf_cmdline(ver, sdata):
     return [__appname__, ver, 'fmap', 'sourceforge', sdata['project'],
@@ -129,8 +139,7 @@ def run_remote_upload(args):
 class UploadInstallers(Command):  # {{{
 
     def add_options(self, parser):
-        parser.add_option('--replace', default=False, action='store_true', help=
-                'Replace existing installers')
+        parser.add_option('--replace', default=False, action='store_true', help='Replace existing installers')
 
     def run(self, opts):
         all_possible = set(installers())
@@ -152,6 +161,7 @@ class UploadInstallers(Command):  # {{{
                 upload_signatures()
             self.upload_to_sourceforge()
             self.upload_to_dbs()
+            self.upload_to_github(opts.replace)
             # self.upload_to_google(opts.replace)
         finally:
             shutil.rmtree(tdir, ignore_errors=True)
@@ -189,6 +199,13 @@ class UploadInstallers(Command):  # {{{
     def upload_to_google(self, replace):
         gdata = get_google_data()
         args = gc_cmdline(__version__, gdata)
+        if replace:
+            args = ['--replace'] + args
+        run_remote_upload(args)
+
+    def upload_to_github(self, replace):
+        data = get_github_data()
+        args = gh_cmdline(__version__, data)
         if replace:
             args = ['--replace'] + args
         run_remote_upload(args)
@@ -232,9 +249,10 @@ class UploadUserManual(Command):  # {{{
         for x in glob.glob(self.j(path, '*')):
             self.build_plugin_example(x)
 
+        srcdir = self.j(gettempdir(), 'user-manual-build', 'en', 'html') + '/'
         for host in ('download', 'files'):
-            check_call(' '.join(['rsync', '-z', '-r', '--progress',
-                'manual/.build/html/', '%s:/srv/manual/' % host]), shell=True)
+            check_call(' '.join(['rsync', '-zrl', '--progress',
+                srcdir, '%s:/srv/manual/' % host]), shell=True)
 # }}}
 
 class UploadDemo(Command):  # {{{
@@ -250,9 +268,9 @@ class UploadDemo(Command):  # {{{
            '''--mono-family  "/usr/share/fonts/corefonts, Andale Mono" '''
            ''''''%self.j(self.SRC, HTML2LRF), shell=True)
 
+        lrf = self.j(self.SRC, 'calibre', 'ebooks', 'lrf', 'html', 'demo')
         check_call(
-            'cd src/calibre/ebooks/lrf/html/demo/ && '
-            'zip -j /tmp/html-demo.zip * /tmp/html2lrf.lrf', shell=True)
+            'cd %s && zip -j /tmp/html-demo.zip * /tmp/html2lrf.lrf' % lrf, shell=True)
 
         check_call('scp /tmp/html-demo.zip divok:%s/'%(DOWNLOADS,), shell=True)
 # }}}
@@ -332,4 +350,3 @@ def test_google_uploader():
 
 if __name__ == '__main__':
     test_google_uploader()
-

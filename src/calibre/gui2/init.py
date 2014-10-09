@@ -7,7 +7,7 @@ __docformat__ = 'restructuredtext en'
 
 import functools
 
-from PyQt4.Qt import (Qt, QApplication, QStackedWidget, QMenu, QTimer,
+from PyQt5.Qt import (Qt, QApplication, QStackedWidget, QMenu, QTimer,
         QSize, QSizePolicy, QStatusBar, QLabel, QFont, QAction, QTabBar)
 
 from calibre.utils.config import prefs
@@ -31,7 +31,10 @@ def partial(*args, **kwargs):
 
 class LibraryViewMixin(object):  # {{{
 
-    def __init__(self, db):
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def init_library_view_mixin(self, db):
         self.library_view.files_dropped.connect(self.iactions['Add Books'].files_dropped, type=Qt.QueuedConnection)
         self.library_view.add_column_signal.connect(partial(self.iactions['Preferences'].do_config,
             initial_plugin=('Interface', 'Custom Columns')),
@@ -67,16 +70,11 @@ class LibraryViewMixin(object):  # {{{
         self.library_view.model().set_highlight_only(config['highlight_search_matches'])
 
     def build_context_menus(self):
+        from calibre.gui2.bars import populate_menu
         lm = QMenu(self)
-        def populate_menu(m, items):
-            for what in items:
-                if what is None:
-                    m.addSeparator()
-                elif what in self.iactions:
-                    m.addAction(self.iactions[what].qaction)
-        populate_menu(lm, gprefs['action-layout-context-menu'])
+        populate_menu(lm, gprefs['action-layout-context-menu'], self.iactions)
         dm = QMenu(self)
-        populate_menu(dm, gprefs['action-layout-context-menu-device'])
+        populate_menu(dm, gprefs['action-layout-context-menu-device'], self.iactions)
         ec = self.iactions['Edit Collections'].qaction
         self.library_view.set_context_menu(lm, ec)
         for v in (self.memory_view, self.card_a_view, self.card_b_view):
@@ -85,7 +83,7 @@ class LibraryViewMixin(object):  # {{{
         if self.cover_flow is not None:
             cm = QMenu(self.cover_flow)
             populate_menu(cm,
-                    gprefs['action-layout-context-menu-cover-browser'])
+                    gprefs['action-layout-context-menu-cover-browser'], self.iactions)
             self.cover_flow.set_context_menu(cm)
 
     def search_done(self, view, ok):
@@ -98,7 +96,6 @@ class LibraryViewMixin(object):  # {{{
                     v.set_current_row(0)
                     if v is self.library_view and v.row_count() == 0:
                         self.book_details.reset_info()
-
 
     # }}}
 
@@ -280,6 +277,7 @@ class VLTabs(QTabBar):  # {{{
         self.setMovable(True)
         self.setTabsClosable(True)
         self.gui = parent
+        self.ignore_tab_changed = False
         self.currentChanged.connect(self.tab_changed)
         self.tabMoved.connect(self.tab_moved, type=Qt.QueuedConnection)
         self.tabCloseRequested.connect(self.tab_close)
@@ -295,14 +293,16 @@ class VLTabs(QTabBar):  # {{{
         self.setVisible(False)
 
     def tab_changed(self, idx):
-        vl = unicode(self.tabData(idx).toString()).strip() or None
-        self.gui.apply_virtual_library(vl)
+        if self.ignore_tab_changed:
+            return
+        vl = unicode(self.tabData(idx) or '').strip() or None
+        self.gui.apply_virtual_library(vl, update_tabs=False)
 
     def tab_moved(self, from_, to):
-        self.current_db.prefs['virt_libs_order'] = [unicode(self.tabData(i).toString()) for i in range(self.count())]
+        self.current_db.prefs['virt_libs_order'] = [unicode(self.tabData(i) or '') for i in range(self.count())]
 
     def tab_close(self, index):
-        vl = unicode(self.tabData(index).toString())
+        vl = unicode(self.tabData(index) or '')
         if vl:  # Dont allow closing the All Books tab
             self.current_db.prefs['virt_libs_hidden'] = list(
                 self.current_db.prefs['virt_libs_hidden']) + [vl]
@@ -313,17 +313,27 @@ class VLTabs(QTabBar):  # {{{
         return self.gui.current_db
 
     def rebuild(self):
-        self.currentChanged.disconnect(self.tab_changed)
+        self.ignore_tab_changed = True
+        try:
+            self._rebuild()
+        finally:
+            self.ignore_tab_changed = False
+
+    def _rebuild(self):
         db = self.current_db
         vl_map = db.prefs.get('virtual_libraries', {})
         virt_libs = frozenset(vl_map)
-        hidden = frozenset(db.prefs['virt_libs_hidden'])
+        hidden = set(db.prefs['virt_libs_hidden'])
         if hidden - virt_libs:
-            db.prefs['virt_libs_hidden'] = list(hidden.intersection(virt_libs))
+            hidden = hidden.intersection(virt_libs)
+            db.prefs['virt_libs_hidden'] = list(hidden)
         order = db.prefs['virt_libs_order']
         while self.count():
             self.removeTab(0)
         current_lib = db.data.get_base_restriction_name()
+        if current_lib in hidden:
+            hidden.discard(current_lib)
+            db.prefs['virt_libs_hidden'] = list(hidden)
         current_idx = all_idx = None
         virt_libs = (set(virt_libs) - hidden) | {''}
         order = {x:i for i, x in enumerate(order)}
@@ -340,7 +350,6 @@ class VLTabs(QTabBar):  # {{{
         self.setCurrentIndex(all_idx if current_idx is None else current_idx)
         if current_idx is None and current_lib:
             self.setTabText(all_idx, current_lib)
-        self.currentChanged.connect(self.tab_changed)
         try:
             self.tabButton(all_idx, self.RightSide).setVisible(False)
         except AttributeError:
@@ -378,7 +387,10 @@ class VLTabs(QTabBar):  # {{{
 
 class LayoutMixin(object):  # {{{
 
-    def __init__(self):
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def init_layout_mixin(self):
         self.vl_tabs = VLTabs(self)
         self.centralwidget.layout().addWidget(self.vl_tabs)
 
@@ -442,6 +454,7 @@ class LayoutMixin(object):  # {{{
                 type=Qt.QueuedConnection)
         self.book_details.open_containing_folder.connect(self.iactions['View'].view_folder_for_id)
         self.book_details.view_specific_format.connect(self.iactions['View'].view_format_by_id)
+        self.book_details.search_requested.connect(self.search.set_search_string)
         self.book_details.remove_specific_format.connect(
                 self.iactions['Remove Books'].remove_format_by_id)
         self.book_details.save_specific_format.connect(

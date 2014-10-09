@@ -809,6 +809,11 @@ class ActionDelete(InterfaceActionBase):
     actual_plugin = 'calibre.gui2.actions.delete:DeleteAction'
     description = _('Delete books from your calibre library or connected device')
 
+class ActionEmbed(InterfaceActionBase):
+    name = 'Embed Metadata'
+    actual_plugin = 'calibre.gui2.actions.embed:EmbedAction'
+    description = _('Embed updated metadata into the actual book files in your calibre library')
+
 class ActionEditMetadata(InterfaceActionBase):
     name = 'Edit Metadata'
     actual_plugin = 'calibre.gui2.actions.edit_metadata:EditMetadataAction'
@@ -828,6 +833,11 @@ class ActionQuickview(InterfaceActionBase):
     name = 'Show Quickview'
     actual_plugin = 'calibre.gui2.actions.show_quickview:ShowQuickviewAction'
     description = _('Show a list of related books quickly')
+
+class ActionTemplateTester(InterfaceActionBase):
+    name = 'Template Tester'
+    actual_plugin = 'calibre.gui2.actions.show_template_tester:ShowTemplateTesterAction'
+    description = _('Show an editor for testing templates')
 
 class ActionSaveToDisk(InterfaceActionBase):
     name = 'Save To Disk'
@@ -964,7 +974,7 @@ plugins += [ActionAdd, ActionFetchAnnotations, ActionGenerateCatalog,
         ActionAddToLibrary, ActionEditCollections, ActionMatchBooks, ActionChooseLibrary,
         ActionCopyToLibrary, ActionTweakEpub, ActionUnpackBook, ActionNextMatch, ActionStore,
         ActionPluginUpdater, ActionPickRandom, ActionEditToC, ActionSortBy,
-        ActionMarkBooks]
+        ActionMarkBooks, ActionEmbed, ActionTemplateTester]
 
 # }}}
 
@@ -1037,6 +1047,11 @@ class InputOptions(PreferencesPlugin):
     name_order = 1
     config_widget = 'calibre.gui2.preferences.conversion:InputOptions'
     description = _('Set conversion options specific to each input format')
+
+    def create_widget(self, *args, **kwargs):
+        # The DOC Input plugin tries to override this
+        self.config_widget = 'calibre.gui2.preferences.conversion:InputOptions'
+        return PreferencesPlugin.create_widget(self, *args, **kwargs)
 
 class CommonOptions(PreferencesPlugin):
     name = 'Common Options'
@@ -1371,6 +1386,7 @@ class StoreCdpStore(StoreBase):
     drm_free_only = True
     headquarters = 'PL'
     formats = ['EPUB', 'MOBI', 'PDF']
+    affiliate = True
 
 class StoreChitankaStore(StoreBase):
     name = u'Моята библиотека'

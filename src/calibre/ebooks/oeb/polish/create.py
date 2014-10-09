@@ -13,9 +13,10 @@ from lxml import etree
 from calibre import prepare_string_for_xml, CurrentDir
 from calibre.ptempfile import TemporaryDirectory
 from calibre.ebooks.oeb.base import serialize
+from calibre.ebooks.metadata import authors_to_string
 from calibre.ebooks.metadata.opf2 import metadata_to_opf
 from calibre.ebooks.oeb.polish.parsing import parse
-from calibre.ebooks.oeb.polish.container import OPF_NAMESPACES, opf_to_azw3
+from calibre.ebooks.oeb.polish.container import OPF_NAMESPACES, opf_to_azw3, Container
 from calibre.ebooks.oeb.polish.utils import guess_type
 from calibre.ebooks.oeb.polish.pretty import pretty_xml_tree, pretty_html_tree
 from calibre.ebooks.oeb.polish.toc import TOC, create_ncx
@@ -63,19 +64,13 @@ def create_book(mi, path, fmt='epub', opf_name='metadata.opf', html_name='start.
    </rootfiles>
 </container>
     '''.format(prepare_string_for_xml(opf_name, True)).encode('utf-8')
-    HTML = '''\
-<?xml version='1.0' encoding='utf-8'?>
-<html lang="{1}" xmlns="http://www.w3.org/1999/xhtml">
-
-    <head>
-        <title>{0}</title>
-    </head>
-
-    <body>
-        <h1>{0}</h1>
-    </body>
-</html>
-    '''.format(prepare_string_for_xml(mi.title), lang).encode('utf-8')
+    HTML = P('templates/new_book.html', data=True).decode('utf-8').replace(
+        '_LANGUAGE_', prepare_string_for_xml(lang, True)
+    ).replace(
+        '_TITLE_', prepare_string_for_xml(mi.title)
+    ).replace(
+        '_AUTHORS_', prepare_string_for_xml(authors_to_string(mi.authors))
+    ).encode('utf-8')
     h = parse(HTML)
     pretty_html_tree(None, h)
     HTML = serialize(h, 'text/html')
@@ -87,7 +82,8 @@ def create_book(mi, path, fmt='epub', opf_name='metadata.opf', html_name='start.
             for name, data in ((opf_name, opf), (html_name, HTML), (toc_name, ncx)):
                 with open(name, 'wb') as f:
                     f.write(data)
-            opf_to_azw3(opf_name, path, DevNull())
+            c = Container(os.path.dirname(os.path.abspath(opf_name)), opf_name, DevNull())
+            opf_to_azw3(opf_name, path, c)
     else:
         with ZipFile(path, 'w', compression=ZIP_STORED) as zf:
             zf.writestr('mimetype', b'application/epub+zip', compression=ZIP_STORED)

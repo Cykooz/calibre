@@ -45,7 +45,8 @@ class PathResolver(object):
 
     def __call__(self, path, allow_user_override=True):
         path = path.replace(os.sep, '/')
-        ans = self.cache.get(path, None)
+        key = (path, allow_user_override)
+        ans = self.cache.get(key, None)
         if ans is None:
             for base in self.locations:
                 if not allow_user_override and base == self.user_path:
@@ -58,7 +59,7 @@ class PathResolver(object):
             if ans is None:
                 ans = os.path.join(self.default_path, *path.split('/'))
 
-            self.cache[path] = ans
+            self.cache[key] = ans
 
         return ans
 
@@ -73,15 +74,18 @@ def get_path(path, data=False, allow_user_override=True):
 
 def get_image_path(path, data=False, allow_user_override=True):
     if not path:
-        return get_path('images')
-    return get_path('images/'+path, data=data)
+        return get_path('images', allow_user_override=allow_user_override)
+    return get_path('images/'+path, data=data, allow_user_override=allow_user_override)
+
+def js_name_to_path(name, ext='.coffee'):
+    path = (u'/'.join(name.split('.'))) + ext
+    d = os.path.dirname
+    base = d(d(os.path.abspath(__file__)))
+    return os.path.join(base, path)
 
 def _compile_coffeescript(name):
     from calibre.utils.serve_coffee import compile_coffeescript
-    path = (u'/'.join(name.split('.'))) + '.coffee'
-    d = os.path.dirname
-    base = d(d(os.path.abspath(__file__)))
-    src = os.path.join(base, path)
+    src = js_name_to_path(name)
     with open(src, 'rb') as f:
         cs, errors = compile_coffeescript(f.read(), src)
         if errors:
@@ -92,12 +96,19 @@ def _compile_coffeescript(name):
         return cs
 
 def compiled_coffeescript(name, dynamic=False):
-    if dynamic:
-        return _compile_coffeescript(name)
-    else:
-        import zipfile
-        zipf = get_path('compiled_coffeescript.zip', allow_user_override=False)
-        with zipfile.ZipFile(zipf, 'r') as zf:
+    import zipfile
+    zipf = get_path('compiled_coffeescript.zip', allow_user_override=False)
+    with zipfile.ZipFile(zipf, 'r') as zf:
+        if dynamic:
+            import json
+            existing_hash = json.loads(zf.comment or '{}').get(name + '.js')
+            if existing_hash is not None:
+                import hashlib
+                with open(js_name_to_path(name), 'rb') as f:
+                    if existing_hash == hashlib.sha1(f.read()).hexdigest():
+                        return zf.read(name + '.js')
+            return _compile_coffeescript(name)
+        else:
             return zf.read(name+'.js')
 
 __builtin__.__dict__['P'] = get_path

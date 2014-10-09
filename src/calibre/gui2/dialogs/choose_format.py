@@ -1,7 +1,7 @@
 __license__   = 'GPL v3'
 __copyright__ = '2008, Kovid Goyal <kovid at kovidgoyal.net>'
 
-from PyQt4.Qt import QDialog, QListWidgetItem, QModelIndex
+from PyQt5.Qt import QDialog, QListWidgetItem, QModelIndex
 
 from calibre.gui2 import file_icon_provider
 from calibre.gui2.dialogs.choose_format_ui import Ui_ChooseFormatDialog
@@ -21,6 +21,13 @@ class ChooseFormatDialog(QDialog, Ui_ChooseFormatDialog):
         self._formats = formats
         self.formats.setCurrentRow(0)
         self._format = None
+
+    def book_converted(self, book_id, fmt):
+        fmt = fmt.upper()
+        if fmt not in self._formats:
+            self._formats.append(fmt)
+            self.formats.addItem(QListWidgetItem(
+                file_icon_provider().icon_from_ext(fmt.lower()), fmt.upper()))
 
     def activated_slot(self, *args):
         self.accept()

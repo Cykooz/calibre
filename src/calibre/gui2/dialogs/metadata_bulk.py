@@ -7,7 +7,7 @@ import re, os
 from collections import namedtuple, defaultdict
 from threading import Thread
 
-from PyQt4.Qt import Qt, QDialog, QGridLayout, QVBoxLayout, QFont, QLabel, \
+from PyQt5.Qt import Qt, QDialog, QGridLayout, QVBoxLayout, QFont, QLabel, \
                      pyqtSignal, QDialogButtonBox, QInputDialog, QLineEdit, \
                      QDateTime, QCompleter
 
@@ -176,20 +176,10 @@ class MyBlockingBusy(QDialog):  # {{{
         if args.cover_action == 'remove':
             cache.set_cover({bid:None for bid in self.ids})
         elif args.cover_action == 'generate':
-            from calibre.ebooks import calibre_cover
-            from calibre.ebooks.metadata import fmt_sidx
-            from calibre.gui2 import config
+            from calibre.ebooks.covers import generate_cover
             for book_id in self.ids:
                 mi = self.db.get_metadata(book_id, index_is_id=True)
-                series_string = None
-                if mi.series:
-                    series_string = _('Book %(sidx)s of %(series)s')%dict(
-                        sidx=fmt_sidx(mi.series_index,
-                        use_roman=config['use_roman_numerals_for_series_number']),
-                        series=mi.series)
-
-                cdata = calibre_cover(mi.title, mi.format_field('authors')[-1],
-                        series_string=series_string)
+                cdata = generate_cover(mi)
                 cache.set_cover({book_id:cdata})
         elif args.cover_action == 'fromfmt':
             for book_id in self.ids:
@@ -569,12 +559,12 @@ class MetadataBulkDialog(ResizableDialog, Ui_MetadataBulkDialog):
     def s_r_sf_itemdata(self, idx):
         if idx is None:
             idx = self.search_field.currentIndex()
-        return unicode(self.search_field.itemData(idx).toString())
+        return unicode(self.search_field.itemData(idx) or '')
 
     def s_r_df_itemdata(self, idx):
         if idx is None:
             idx = self.destination_field.currentIndex()
-        return unicode(self.destination_field.itemData(idx).toString())
+        return unicode(self.destination_field.itemData(idx) or '')
 
     def s_r_get_field(self, mi, field):
         if field:

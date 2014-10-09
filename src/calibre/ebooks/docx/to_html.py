@@ -13,6 +13,7 @@ from lxml import html
 from lxml.html.builder import (
     HTML, HEAD, TITLE, BODY, LINK, META, P, SPAN, BR, DIV, SUP, A, DT, DL, DD, H1)
 
+from calibre import guess_type
 from calibre.ebooks.docx.container import DOCX, fromstring
 from calibre.ebooks.docx.names import (
     XPath, is_tag, XML, STYLES, NUMBERING, FONTS, get, generate_anchor,
@@ -340,11 +341,17 @@ class Convert(object):
         opf = OPFCreator(self.dest_dir, self.mi)
         opf.toc = toc
         opf.create_manifest_from_files_in([self.dest_dir])
+        for item in opf.manifest:
+            if item.media_type == 'text/html':
+                item.media_type = guess_type('a.xhtml')[0]
         opf.create_spine(['index.html'])
         if self.cover_image is not None:
             opf.guide.set_cover(self.cover_image)
-        with open(os.path.join(self.dest_dir, 'metadata.opf'), 'wb') as of, open(os.path.join(self.dest_dir, 'toc.ncx'), 'wb') as ncx:
+        toc_file = os.path.join(self.dest_dir, 'toc.ncx')
+        with open(os.path.join(self.dest_dir, 'metadata.opf'), 'wb') as of, open(toc_file, 'wb') as ncx:
             opf.render(of, ncx, 'toc.ncx')
+        if os.path.getsize(toc_file) == 0:
+            os.remove(toc_file)
         return os.path.join(self.dest_dir, 'metadata.opf')
 
     def read_block_anchors(self, doc):
@@ -608,6 +615,10 @@ class Convert(object):
                 text.add_elem(SPAN(NBSP * spaces))
                 ans.append(text.elem)
                 ans[-1].set('class', 'tab')
+            elif is_tag(child, 'w:noBreakHyphen'):
+                text.buf.append(u'\u2011')
+            elif is_tag(child, 'w:softHyphen'):
+                text.buf.append(u'\u00ad')
         if text.buf:
             setattr(text.elem, text.attr, ''.join(text.buf))
 
@@ -629,7 +640,7 @@ class Convert(object):
             if last_run[-1][1] == style:
                 last_run.append((html_obj, style))
             else:
-                self.framed.append((html_obj, style))
+                self.framed[-1].append((html_obj, style))
         else:
             last_run.append((html_obj, style))
 
